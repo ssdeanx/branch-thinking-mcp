@@ -224,7 +224,7 @@ class BranchingThoughtServer {
                 linkType,
                 reason
               }, null, 2)
-            }]
+            }] 
           };
         }
         case 'add-snippet': {
@@ -325,11 +325,29 @@ class BranchingThoughtServer {
         case 'visualize': {
           const branchId = command.branchId || this.branchManager.getActiveBranch()?.id;
           const data = this.branchManager.visualizeBranch(branchId);
+
+          // Build Mermaid diagram string
+          let mermaid = 'graph TD\n';
+          for (const node of data.nodes) {
+            mermaid += `  ${node.id.replace(/[^a-zA-Z0-9_]/g, '_')}[${node.label}]\n`;
+          }
+          for (const edge of data.edges) {
+            const from = edge.from.replace(/[^a-zA-Z0-9_]/g, '_');
+            const to = edge.to.replace(/[^a-zA-Z0-9_]/g, '_');
+            mermaid += `  ${from} --|${edge.label}|--> ${to}\n`;
+          }
+
           return {
-            content: [{
-              type: "text",
-              text: JSON.stringify({ branchId, visualization: data }, null, 2)
-            }]
+            content: [
+              {
+                type: "json",
+                text: JSON.stringify({ branchId, visualization: data }, null, 2)
+              },
+              {
+                type: "mermaid",
+                text: mermaid
+              }
+            ]
           };
         }
       }
@@ -357,160 +375,171 @@ class BranchingThoughtServer {
 
 const BRANCHING_THOUGHT_TOOL: Tool = {
   name: "branch-thinking",
-  description: `# Branch-Thinking Tool: Advanced Knowledge and Coding Workflow Assistant
+  description: `
+# 🧠 Branch-Thinking Tool
 
-## How to Use
-- Add a Thought: Provide a string (the thought content) and specify the branch. Optionally include metadata (type, confidence, key points).
-- Batch Add: Submit an array of thought objects to add multiple thoughts or insights at once.
-- Automatic Cross-Referencing: Thoughts are linked to the most semantically similar thoughts (direct and multi-hop, up to 3 hops) across all branches. Cross-references include a similarity score and type ("very similar", "related", "multi-hop").
-- Scoring: Each thought and branch gets a dynamic score based on semantic centrality, recency, diversity, confidence, and key points.
+AI-native tool for managing, visualizing, and reasoning over branching thoughts, tasks, code, and knowledge.
 
-## Commands
-- list — Show all branches and their status, including aggregate scores.
-- focus [branchId] — Switch focus to a specific branch for targeted thinking.
-- history [branchId?] — View the chronological history of thoughts in a branch.
-- insights [branchId?] — Retrieve recent, AI-generated insights for a branch.
-- crossrefs [branchId?] — Show all cross-references for a branch.
-- hub-thoughts [branchId?] — List thoughts with the highest cross-branch connections/scores.
-- semantic-search [query] — Find thoughts similar to a query (using embeddings).
-- list-tasks [branchId] [status] [assignee] [due] — List tasks for a branch, filterable by status, assignee, or due date.
-- update-task-status [taskId] [status] — Update a task's status (currently stateless mode).
-- summarize-tasks [branchId] — Show a summary of open/in progress/closed tasks for a branch.
-- link-thoughts [fromThoughtId] [toThoughtId] [linkType] [reason?] — Link two thoughts explicitly.
-- add-snippet [content] [tags] — Add a reusable code snippet with tags.
-- snippet-search [query] — Search for relevant code snippets.
-- summarize-branch [branchId?] — Generate a summary of all thoughts in a branch.
-- doc-thought [thoughtId] — Generate documentation for a specific thought.
-- extract-tasks [branchId?] — List actionable items or TODOs from a branch.
-- review-branch [branchId?] — Get AI suggestions for code or thought improvements in a branch.
-- visualize [branchId?] — Generate a visual graph of branch connections and cross-references.
-- ask [question] — Get an AI-generated answer using the knowledge base.
+---
 
-Note: New commands may be added in the future. To see all supported commands, check the handleCommand method in src/index.ts.
+## ✨ Features
 
-## Best Practices
-- Use batch mode to quickly capture brainstorms or meeting notes.
-- Regularly review high-scoring thoughts and branches for action or deeper work.
-- Follow cross-references and multi-hop links to discover non-obvious connections and foster creativity.
-- Leverage scores to identify "hub" thoughts or ideas that bridge multiple areas.
+- **Semantic Search & Embeddings** — Instantly find relevant thoughts using high-quality vector search.
+- **Agentic Visualization** — Generate JSON graphs and beautiful Mermaid diagrams.
+- **Branch & Thought Management** — Organize, batch-add, and cross-link ideas.
+- **Insight Generation & Task Automation** — Extract tasks, review code, and surface high-impact ideas.
 
-## Example Usage
-- Add a new thought: { content: "Refactor the API for clarity", branchId: "dev" }
-- Batch add: [ { content: "Explore AI search integration", branchId: "features" }, { content: "Document scoring algorithm", branchId: "docs" } ]
-- Switch focus: focus dev
-- Get insights: insights features
-- Show cross-references: crossrefs dev
-- List hub thoughts: hub-thoughts features
-- Semantic search: semantic-search "improve documentation"
-- Link thoughts: link-thoughts thought-1 thought-2 supports "Thought 1 supports Thought 2"
+---
 
-This tool is ideal for advanced coding, research, and knowledge management workflows where deep connection and prioritization of ideas is critical.`,
+## 🛠️ Core Commands
+
+- \`list\` — Show all branches and their status
+- \`focus [branchId]\` — Switch focus to a branch
+- \`history [branchId?]\` — Chronological thought history
+- \`insights [branchId?]\` — Recent AI-generated insights
+- \`crossrefs [branchId?]\` — All cross-references for a branch
+- \`hub-thoughts [branchId?]\` — Thoughts with highest cross-branch connectivity
+- \`semantic-search [query]\` — Find similar thoughts (embeddings)
+- \`link-thoughts [from] [to] [type] [reason?]\` — Explicitly link thoughts
+- \`add-snippet [content] [tags]\` — Add code snippet
+- \`snippet-search [query]\` — Search code snippets
+- \`summarize-branch [branchId?]\` — Branch summary
+- \`doc-thought [thoughtId]\` — Auto-generate documentation
+- \`extract-tasks [branchId?]\` — Extract actionable items
+- \`list-tasks [branchId] [status] [assignee] [due]\` — Filtered task list
+- \`update-task-status [taskId] [status]\` — Update a task
+- \`summarize-tasks [branchId]\` — Task summary
+- \`review-branch [branchId?]\` — AI code/thought review
+- \`visualize [branchId?]\` — Output JSON+Mermaid graph
+- \`ask [question]\` — AI answer from knowledge base
+
+---
+
+## 💡 Best Practices
+
+- Use batch/insight modes for brainstorming and research.
+- Regularly review hub thoughts and cross-references for hidden connections.
+- Leverage visualization and semantic search for agentic workflows.
+
+---
+
+## ⚡ Quick Example
+
+- ✍️ \`ask-snippet [content] [tags]\` — Add a code snippet to the branch.  
+  _Params:_  
+  - \`content\` (string): — The snippet code or text.  
+  - \`tags\` (array of strings): — Tags for categorization.
+- 📝 \`summarize-branch [branchId?]\` — Returns a summary of the specified branch.  
+  _If no branchId is given, summarizes the active branch._
+
+`,  
   inputSchema: {
     type: "object",
     properties: {
       content: {
         oneOf: [
-          { type: "string", description: "The thought content" },
-          { type: "array", items: { type: "object" }, description: "Batch: array of thought objects" }
+          { type: "string", description: "Single thought content as a string." },
+          { type: "array", items: { type: "object" }, description: "Batch mode: array of thought objects, each with content, branchId, and optional metadata." }
         ],
-        description: "The thought content or batch of thoughts"
+        description: "Thought content (string) or batch of thoughts (array of objects)."
       },
       branchId: {
         type: "string",
-        description: "Optional: ID of the branch (generated if not provided)"
+        description: "Branch ID to associate with the thought(s). If omitted, a new branch may be created or the active branch used."
       },
       parentBranchId: {
         type: "string",
-        description: "Optional: ID of the parent branch"
+        description: "Optional: ID of the parent branch for hierarchical organization."
       },
       type: {
         type: "string",
-        description: "Type of thought (e.g., 'analysis', 'hypothesis', 'observation')"
+        description: "Thought type: e.g., 'analysis', 'hypothesis', 'observation', 'task', etc. Used for filtering and scoring."
       },
       confidence: {
         type: "number",
-        description: "Optional: Confidence score (0-1)"
+        description: "Optional: Confidence score (0-1) for the thought, for ranking or filtering."
       },
       keyPoints: {
         type: "array",
         items: { type: "string" },
-        description: "Optional: Key points identified in the thought"
+        description: "Optional: Key points or highlights extracted from the thought."
       },
       relatedInsights: {
         type: "array",
         items: { type: "string" },
-        description: "Optional: IDs of related insights"
+        description: "Optional: IDs of related insights, for semantic linking."
       },
       crossRefs: {
         type: "array",
         items: {
           type: "object",
           properties: {
-            toBranch: { type: "string" },
-            type: { type: "string" },
-            reason: { type: "string" },
-            strength: { type: "number" }
-          }
+            toBranch: { type: "string", description: "Target branch ID for the cross-reference." },
+            type: { type: "string", description: "Type of cross-reference (e.g., 'related', 'supports', 'contradicts', etc.)." },
+            reason: { type: "string", description: "Optional: Reason or context for the cross-reference." },
+            strength: { type: "number", description: "Optional: Numeric strength/confidence of the cross-reference (0-1)." }
+          },
+          required: ["toBranch", "type"]
         },
-        description: "Optional: Cross-references to other branches"
+        description: "Optional: Array of cross-references to other branches, with type, reason, and strength."
       },
       command: {
         type: "object",
-        description: "Optional: Navigation command",
+        description: "Optional: Navigation or workflow command. Used for agentic/AI interactions.",
         properties: {
           type: {
             type: "string",
             enum: ["list", "focus", "history", "insights", "crossrefs", "hub-thoughts", "semantic-search", "link-thoughts", "add-snippet", "snippet-search", "summarize-branch", "doc-thought", "extract-tasks", "review-branch", "visualize", "ask"],
-            description: "Command type"
+            description: "Command type (see tool description for complete list and semantics)."
           },
           branchId: {
             type: "string",
-            description: "Branch ID for commands that require it"
-           },
-           tags: {
-             type: "array",
-             items: { type: "string" },
-             description: "Tags for add-snippet command"
-           },
-           author: {
-             type: "string",
-             description: "Optional author for add-snippet command"
-           },
-           content: {
-             type: "string",
-             description: "Snippet content for add-snippet command"
-           },
-           thoughtId: {
-             type: "string",
-             description: "Thought ID for doc-thought command"
-           },
-           question: {
-             type: "string",
-             description: "Question for ask command"
-           },
-           query: {
+            description: "Branch ID for commands that operate on a specific branch."
+          },
+          tags: {
+            type: "array",
+            items: { type: "string" },
+            description: "Tags for add-snippet or snippet-search commands."
+          },
+          author: {
             type: "string",
-            description: "Query string for semantic-search command"
+            description: "Optional: Author or agent for add-snippet command."
+          },
+          content: {
+            type: "string",
+            description: "Content for add-snippet, search, or ask commands."
+          },
+          thoughtId: {
+            type: "string",
+            description: "Thought ID for doc-thought, link-thoughts, or review commands."
+          },
+          question: {
+            type: "string",
+            description: "Free-form question for the ask command (AI/LLM query)."
+          },
+          query: {
+            type: "string",
+            description: "Query string for semantic-search, snippet-search, or other search commands."
           },
           topN: {
             type: "number",
-            description: "Number of top results to return for semantic-search"
+            description: "Number of top results to return for semantic-search or snippet-search."
           },
           fromThoughtId: {
             type: "string",
-            description: "Source thought ID for link-thoughts command"
+            description: "Source thought ID for link-thoughts or cross-linking commands."
           },
           toThoughtId: {
             type: "string",
-            description: "Target thought ID for link-thoughts command"
+            description: "Target thought ID for link-thoughts or cross-linking commands."
           },
           linkType: {
             type: "string",
-            description: "Type of link for link-thoughts command (supports, contradicts, related, expands, refines)"
+            description: "Type of link for link-thoughts command (e.g., supports, contradicts, related, expands, refines)."
           },
           reason: {
             type: "string",
-            description: "Optional reason for the link (link-thoughts command)"
+            description: "Optional: Reason or context for linking thoughts."
           }
         },
         required: ["type"]

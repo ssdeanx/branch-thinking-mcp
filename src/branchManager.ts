@@ -58,10 +58,24 @@ export class BranchManager {
     return this.embeddingPipeline;
   }
 
-  // Truncate text to 512 tokens/words for embedding speed
-  private truncateText(text: string, maxWords = 512): string {
-    const words = text.split(/\s+/);
-    return words.length > maxWords ? words.slice(0, maxWords).join(' ') : text;
+  // Truncate text to 512 tokens (OpenAI/transformers style) for embedding speed
+  private truncateText(text: string, maxTokens = 512): string {
+    try {
+      // Synchronously import js-tiktoken
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { encoding_for_model } = require("js-tiktoken");
+      // Always use o200k_base for compatibility with modern models
+      const enc = encoding_for_model("o200k_base");
+      const tokens = enc.encode(text);
+      if (tokens.length > maxTokens) {
+        return enc.decode(tokens.slice(0, maxTokens));
+      }
+      return text;
+    } catch (err) {
+      // Fallback: word-based truncation
+      const words = text.split(/\s+/);
+      return words.length > maxTokens ? words.slice(0, maxTokens).join(' ') : text;
+    }
   }
 
   // Compute a simple hash for content
@@ -104,32 +118,42 @@ export class BranchManager {
   /**
    * Compute an embedding for a given text.
    */
+  /**
+   * Compute an embedding for a given text.
+   * Uses token-based truncation (o200k_base) for consistent input length.
+   * Handles pooling for MiniLM-style output.
+   */
   public async embedText(text: string): Promise<number[]> {
     const truncated = this.truncateText(text);
     const hash = this.hashContent(truncated);
     await this.loadPersistentEmbeddingCache();
+    // Check in-memory LRU cache
+    if (this.embeddingLRU.has(hash)) {
+      return this.embeddingLRU.get(hash)!;
+    }
     // Check persistent cache
     if (this.persistentEmbeddingCache[hash]) {
       this.embeddingLRU.set(hash, this.persistentEmbeddingCache[hash].embedding);
       return this.persistentEmbeddingCache[hash].embedding;
     }
-    // Check LRU
-    if (this.embeddingLRU.has(hash)) {
-      return this.embeddingLRU.get(hash)!;
+    const embeddingPipeline = await this.getEmbeddingPipeline();
+    const output = await embeddingPipeline(truncated);
+    // MiniLM returns [1, tokens, dim] or { data: [[...]] }
+    let tokenVectors: number[][] = Array.isArray(output) ? output[0] : output.data[0];
+    // Mean pooling: average across tokens
+    const pooled = new Array(tokenVectors[0].length).fill(0);
+    for (const vec of tokenVectors) {
+      for (let i = 0; i < vec.length; i++) {
+        pooled[i] += vec[i];
+      }
     }
-    const pipe = await this.getEmbeddingPipeline();
-    const output = await pipe(truncated);
-    // output is [1, tokens, 384] -> average across tokens
-    const arr = output.data;
-    // Average pooling over tokens
-    const pooled = arr[0].reduce((acc: number[], cur: number[]) => {
-      if (acc.length === 0) return cur;
-      return acc.map((v: number, i: number) => v + cur[i]);
-    }, new Array<number>(arr[0][0].length).fill(0)).map((v: number) => v / arr[0].length);
-    // Save to caches
+    for (let i = 0; i < pooled.length; i++) {
+      pooled[i] /= tokenVectors.length;
+    }
+    this.embeddings.set(hash, pooled);
     this.embeddingLRU.set(hash, pooled);
     this.persistentEmbeddingCache[hash] = { embedding: pooled, hash };
-    this.savePersistentEmbeddingCache();
+    await this.savePersistentEmbeddingCache();
     return pooled;
   }
 
@@ -141,17 +165,18 @@ export class BranchManager {
     const tasks: Promise<void>[] = [];
     for (const branch of this.branches.values()) {
       for (const thought of branch.thoughts) {
-        const truncated = this.truncateText(thought.content);
-        const hash = this.hashContent(truncated);
-        // Only embed if not in persistent cache or content changed
-        if (!this.persistentEmbeddingCache[hash]) {
-          tasks.push((async () => {
+        // Use token-based truncation for hashing and embedding
+        tasks.push((async () => {
+          const truncated = this.truncateText(thought.content);
+          const hash = this.hashContent(truncated);
+          // Only embed if not in persistent cache or content changed
+          if (!this.persistentEmbeddingCache[hash]) {
             const emb = await this.embedText(thought.content);
             this.embeddings.set(thought.id, emb);
-          })());
-        } else {
-          this.embeddings.set(thought.id, this.persistentEmbeddingCache[hash].embedding);
-        }
+          } else {
+            this.embeddings.set(thought.id, this.persistentEmbeddingCache[hash].embedding);
+          }
+        })());
       }
     }
     // Batch/parallelize up to 8 at a time

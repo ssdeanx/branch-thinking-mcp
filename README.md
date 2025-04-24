@@ -7,6 +7,10 @@
 
 > ⚡️ **Branch-based thought navigation, cross-referencing, and AI-powered task/insight management for Model Context Protocol (MCP) servers.**
 
+## 📝 Summary
+
+**Branch-Thinking MCP Tool** is an advanced agentic platform for managing, visualizing, and reasoning over branching thoughts, tasks, code, and knowledge. It empowers both AI agents and humans to organize complex projects, cross-link ideas, and automate insight generation using a powerful branch-based paradigm. With semantic search, visualization, and persistent task/code management, it is designed for next-generation collaborative and autonomous workflows.
+
 ---
 
 ## ✨ Features
@@ -36,6 +40,16 @@ flowchart TD
     BM-->|Save/Load|Disk
     BM-->|Results|Tool
     Tool-->|Output|User
+```
+
+---
+
+## 🚀 Quick Start
+
+```bash
+pnpm install
+pnpm build
+node dist/index.js --help
 ```
 
 ---
@@ -72,7 +86,57 @@ node dist/index.js
 
 ---
 
-## 🛠️ Supported Commands
+## 🛠️ Command Reference
+
+### Branch Management
+
+| Command | Description |
+|---------|-------------|
+| `list` | Show all branches with status |
+| `focus [branchId]` | Switch focus to a branch |
+| `history [branchId?]` | Show thought history |
+| `summarize-branch [branchId?]` | AI summary of branch |
+| `review-branch [branchId?]` | AI review of branch |
+| `visualize [branchId?]` | Visual graph of connections |
+
+### Thought & Insight Management
+
+| Command | Description |
+|---------|-------------|
+| `insights [branchId?]` | Get AI-generated insights |
+| `crossrefs [branchId?]` | Show cross-references |
+| `hub-thoughts [branchId?]` | List hub thoughts |
+| `semantic-search [query]` | Find similar thoughts |
+| `link-thoughts [from] [to] [type] [reason?]` | Link two thoughts |
+| `add-snippet [content] [tags]` | Save a code snippet |
+| `snippet-search [query]` | Search code snippets |
+| `doc-thought [thoughtId]` | Document a thought |
+
+### Task Management
+
+| Command | Description |
+|---------|-------------|
+| `extract-tasks [branchId?]` | Extract actionable items |
+| `list-tasks [branchId] [status] [assignee] [due]` | List/filter tasks |
+| `update-task-status [taskId] [status]` | Update a task’s status |
+| `summarize-tasks [branchId]` | Summarize tasks |
+
+### AI & Knowledge
+
+| Command | Description |
+|---------|-------------|
+| `ask [question]` | AI answer from knowledge base |
+
+---
+
+## ⚙️ Configuration Options
+
+- `command` (string): Path to the Node.js executable (default: `node`)
+- `args` (array): Arguments to launch the tool (default: `["dist/index.js"]`)
+- `MCP_STORAGE_PATH` (env): Custom persistent storage directory
+- See example in your MCP config section above
+
+---
 
 | Command | Description |
 |---------|-------------|
@@ -153,12 +217,136 @@ node dist/index.js
 
 ---
 
+## 🧪 Testing & Quality
+
+- Run all tests: `pnpm test`
+- Lint code: `pnpm lint`
+- Type-check: `pnpm build`
+- Advanced config: Edit `src/branchManager.ts` for scoring/AI logic
+
+---
+
+## 🔐 Security & Privacy
+
+- All persistent data is stored locally (default: project directory or `MCP_STORAGE_PATH`)
+- No external API calls unless configured
+- Agents/users are responsible for privacy of stored thoughts and tasks
+- See CONTRIBUTING for responsible disclosure
+
+---
+
 ## 🛡️ Troubleshooting & Advanced Configuration
 
 - **Tool not responding?** Check your MCP server logs and ensure the tool is listed in `claude_desktop_config.json`.
 - **Persistent storage issues?** Ensure the server has write access to its working directory.
 - **Customizing scoring/AI?** Edit `src/branchManager.ts` for advanced algorithms and heuristics.
 - **Want to add new commands?** Extend `handleCommand` in `src/index.ts`.
+
+---
+
+## 🏁 Project Scope
+
+Branch-Thinking MCP Tool is designed to provide advanced, AI-native branching thought management for agents and humans. It enables:
+
+- Parallel reasoning and research via branches
+- Cross-referencing and semantic linking of ideas
+- Persistent, queryable task and code snippet management
+- Visualization and summarization for agentic workflows
+- Integration with MCP servers and future extensibility
+
+## 🔮 Future Roadmap
+
+### Planned Features & Timeline
+
+```mermaid
+gantt
+    title Branch-Thinking MCP Roadmap (2025)
+    dateFormat  YYYY-MM-DD
+    section Q2 2025
+    Web Visualization Dashboard      :done,      des1, 2025-04-01,2025-05-01
+    Real-time Collaboration         :active,    des2, 2025-04-15,2025-06-01
+    Import/Export Integrations      :           des3, 2025-05-01,2025-06-15
+    section Q3 2025
+    AI-driven Branch Merging        :           des4, 2025-06-15,2025-07-31
+    Granular Access Control         :           des5, 2025-07-01,2025-08-15
+    Plugin System                   :           des6, 2025-08-01,2025-09-15
+    section Q4 2025
+    Notification Hooks              :           des7, 2025-09-01,2025-10-01
+    Custom Scoring/Insight Plugins  :           des8, 2025-10-01,2025-11-15
+    Mobile/Tablet UI                :           des9, 2025-11-01,2025-12-15
+```
+
+### 🚀 Possible Future Additions
+
+- 🌐 Web-based interactive dashboard (completed Q2 2025)
+- 🤝 Real-time multi-user collaboration
+- 🗂️ Import/export (Obsidian, Logseq, Notion, etc.)
+- 🧬 AI-driven branch merging & suggestion
+- 🛡️ Granular permissions and access control
+- 📦 Plugin system for custom logic (scoring, integrations)
+- 🔔 Notification and webhook support
+- 🧑‍🎨 Customizable scoring/insight algorithms
+- 📱 Mobile/tablet optimized UI
+- 🧑‍💻 Agent training and simulation mode
+- 📝 Automated meeting/brainstorm capture
+- 🗃️ Knowledge base sync (external sources)
+- 🔎 Advanced semantic search and clustering
+- 🧩 Integration with LLMs and agent frameworks
+- 📊 Enhanced analytics and reporting
+
+## 🚧 Known Issues & Limitations
+
+- Some advanced AI features may require additional configuration or API keys
+- Visualization is best viewed in supported markdown renderers (e.g., GitHub, Obsidian)
+- Multi-user collaboration is experimental
+- See open issues for more
+
+---
+
+## ❓ FAQ / Troubleshooting
+
+**Q: The tool isn't responding!**
+A: Check the MCP server logs and ensure configuration is correct.
+
+**Q: How do I reset storage?**
+A: Delete or move the persistent storage directory (see config).
+
+**Q: How do I add a new command?**
+A: Extend `handleCommand` in `src/index.ts` and document it in the README.
+
+---
+
+## 🤝 Contribution Guidelines
+
+- Follow the existing code style and add doc comments for new functions/classes
+- Use clear, descriptive commit messages
+- Open a PR for all major changes and describe your reasoning
+- Update the README and roadmap for new features
+- Run lint and tests before submitting
+
+---
+
+## 📝 Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md) for recent updates.
+
+---
+
+## 🤖 Agent Onboarding Note
+
+> **Welcome, Coding Agent!**
+>
+> This project is designed for agentic, collaborative, and human+AI workflows. Please:
+
+> - Read the README.md end-to-end—especially the “Scope,” “Roadmap,” and “Best Practices” sections.
+> - Always check for TypeScript and runtime errors after making code edits (see `pnpm lint`, `pnpm build`).
+> - Document any new commands or features clearly in the README and code comments.
+> - If you add new agentic patterns or workflows, update the “Best Practices” and “Quick Example” sections.
+> - For major changes, open a PR and describe your reasoning and design choices.
+> - If you encounter blockers, add them to the “Known Issues & Limitations” section.
+> - Keep the roadmap and Gantt chart up to date for future contributors.
+>
+> Thank you for contributing to Branch-Thinking MCP!
 
 ---
 
