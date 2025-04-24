@@ -1,5 +1,65 @@
 # 🚦 Branch-Thinking MCP Tool
 
+[![Changelog](https://img.shields.io/badge/changelog-md-blue)](./CHANGELOG.md)
+[![Issues](https://img.shields.io/github/issues/your-org/branch-thinking-mcp)](https://github.com/your-org/branch-thinking-mcp/issues)
+
+![Node.js](https://img.shields.io/badge/Node.js-18%2B-green?logo=node.js)
+![TypeScript](https://img.shields.io/badge/TypeScript-4.x-blue?logo=typescript)
+![MCP](https://img.shields.io/badge/MCP-Server-orange?logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHZpZXdCb3g9IjAgMCAyMCAyMCIgZmlsbD0ibm9uZSI+PHJlY3Qgd2lkdGg9IjIwIiBoZWlnaHQ9IjIwIiByeD0iNSIgZmlsbD0iI0ZGMzYwMCIvPjwvc3ZnPg==)
+![MIT License](https://img.shields.io/badge/license-MIT-lightgrey)
+
+> **What’s New (2025-04):**
+
+> - Refreshed agent/AI-friendly commands and documentation
+> - Improved onboarding for both humans and agents
+> - See the new Live Example and Agent FAQ below!
+
+---
+
+## 📚 Table of Contents
+
+- [Why Branch-Thinking?](#-why-branch-thinking)
+- [Summary](#-summary)
+- [Features](#-features)
+- [Architecture & Flow](#-architecture--flow)
+- [Screenshots](#-screenshots)
+- [Quick Start](#-quick-start)
+- [Getting Started](#-getting-started)
+- [Live Example: Agentic Workflow](#-live-example-agentic-workflow)
+- [Command Reference](#-command-reference)
+- [Real-World Usage Recipes](#-real-world-usage-recipes)
+- [Best Practices & AI Agent Guidance](#-best-practices--ai-agent-guidance)
+- [Configuration Options](#-configuration-options)
+- [How It Works](#-how-it-works)
+- [Advanced Usage Scenarios](#-advanced-usage-scenarios)
+- [Testing & Quality](#-testing--quality)
+- [Security & Responsible Disclosure](#-security--responsible-disclosure)
+- [Accessibility & Internationalization](#-accessibility--internationalization)
+- [Troubleshooting](#-faq--troubleshooting)
+- [Contribution Guidelines](#-contribution-guidelines)
+- [Changelog](#-changelog)
+- [FAQ for Agents](#-faq-for-agents)
+- [Agent Onboarding Note](#-agent-onboarding-note)
+- [Future Updates](#-future-updates)
+- [References & Related Projects](#-references--related-projects)
+- [Credits](#-credits)
+- [License](#-license)
+
+> **What’s New (2025-04):**
+
+> - Refreshed agent/AI-friendly commands and documentation
+> - Improved onboarding for both humans and agents
+> - See the new Live Example and Agent FAQ below!
+
+---
+
+## ❓ Why Branch-Thinking?
+
+- **Agentic by Design:** Built for both human and AI workflows—every command is agent-friendly.
+- **True Branching:** Organize, cross-link, and reason over ideas, code, and tasks in parallel.
+- **AI-Native:** Semantic search, auto-summarization, and insight generation out-of-the-box.
+- **Persistent & Visual:** Never lose a thought—everything is queryable, visualizable, and extensible.
+
 ![Node.js](https://img.shields.io/badge/Node.js-18%2B-green?logo=node.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-4.x-blue?logo=typescript)
 ![MCP](https://img.shields.io/badge/MCP-Server-orange?logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHZpZXdCb3g9IjAgMCAyMCAyMCIgZmlsbD0ibm9uZSI+PHJlY3Qgd2lkdGg9IjIwIiBoZWlnaHQ9IjIwIiByeD0iNSIgZmlsbD0iI0ZGMzYwMCIvPjwvc3ZnPg==)
@@ -8,6 +68,8 @@
 > ⚡️ **Branch-based thought navigation, cross-referencing, and AI-powered task/insight management for Model Context Protocol (MCP) servers.**
 
 ## 📝 Summary
+
+> **Branch-Thinking MCP Tool** is an advanced agentic platform for managing, visualizing, and reasoning over branching thoughts, tasks, code, and knowledge. It empowers both AI agents and humans to organize complex projects, cross-link ideas, and automate insight generation using a powerful branch-based paradigm. With semantic search, visualization, and persistent task/code management, it is designed for next-generation collaborative and autonomous workflows.
 
 **Branch-Thinking MCP Tool** is an advanced agentic platform for managing, visualizing, and reasoning over branching thoughts, tasks, code, and knowledge. It empowers both AI agents and humans to organize complex projects, cross-link ideas, and automate insight generation using a powerful branch-based paradigm. With semantic search, visualization, and persistent task/code management, it is designed for next-generation collaborative and autonomous workflows.
 
@@ -41,6 +103,13 @@ flowchart TD
     BM-->|Results|Tool
     Tool-->|Output|User
 ```
+
+---
+
+## 🖼️ Screenshots
+
+![Branch-Thinking Visualization Example](https://user-images.githubusercontent.com/example/branch-thinking-graph.png)
+*Visualize branches and cross-linked thoughts in real-time.*
 
 ---
 
@@ -83,6 +152,63 @@ Add to your `claude_desktop_config.json`:
 ```bash
 node dist/index.js
 ```
+
+---
+
+## 🧑‍💻 Real-World Usage Recipes
+
+### 1. Knowledge Capture & Linking
+
+```bash
+# Batch capture meeting notes
+add-thought dev "Discussed semantic search improvements" note
+add-thought dev "Agreed to refactor API" decision
+# Link related thoughts
+link-thoughts t1 t2 supports "API refactor supports search improvements"
+```
+
+### 2. Agentic Task Extraction
+
+```bash
+# Extract and manage tasks from a research branch
+extract-tasks research
+list-tasks research open
+update-task-status task-1 in_progress
+```
+
+### 3. Visualization for Insight
+
+```bash
+# Generate and interpret a knowledge graph
+visualize dev
+# Review AI-generated summary
+summarize-branch dev
+```
+
+---
+
+## 🧑‍💻 Live Example: Agentic Workflow
+
+```bash
+# 1. Create a new branch for your project or idea
+create-branch "AI Research"
+
+# 2. Add thoughts and observations
+add-thought [branchId] "Explore semantic search for agent workflows" analysis
+add-thought [branchId] "Test cross-linking and summarization" observation
+
+# 3. Link related thoughts
+link-thoughts [thoughtId1] [thoughtId2] supports "Thought 2 validates Thought 1"
+
+# 4. See your knowledge graph
+visualize [branchId]
+
+# 5. Extract tasks and get AI review
+extract-tasks [branchId]
+review-branch [branchId]
+```
+
+> Replace `[branchId]` and `[thoughtIdX]` with actual IDs from `list` and `history`.
 
 ---
 
@@ -199,6 +325,12 @@ node dist/index.js
 
 ## 💡 Best Practices & AI Agent Guidance
 
+- **Always start with `create-branch`** to ensure clean context.
+- **Use `list` and `focus`** to navigate between projects or lines of thought.
+- **Leverage `summarize-branch` and `insights`** after adding several thoughts to get AI-generated context.
+- **Use `link-thoughts`** to explicitly connect ideas, tasks, or code for richer semantic graphs.
+- **After code changes, always run `pnpm lint` and `pnpm build`** to catch errors early.
+
 - **Decompose complex goals** into sequences of thought/task/insight commands.
 - **Iterate and adapt:** Use feedback from summaries, reviews, and visualizations to refine next actions.
 - **Explicitly specify parameters** (branchId, status, assignee, etc.) for precise results.
@@ -213,11 +345,40 @@ node dist/index.js
 
 | ![Node.js](https://img.shields.io/badge/Node.js-18%2B-green?logo=node.js) | ![TypeScript](https://img.shields.io/badge/TypeScript-4.x-blue?logo=typescript) | ![MCP](https://img.shields.io/badge/MCP-Server-orange?logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHZpZXdCb3g9IjAgMCAyMCAyMCIgZmlsbD0ibm9uZSI+PHJlY3Qgd2lkdGg9IjIwIiBoZWlnaHQ9IjIwIiByeD0iNSIgZmlsbD0iI0ZGMzYwMCIvPjwvc3ZnPg==) |
 |---|---|---|
-| Node.js 18+ | TypeScript 4.x | Model Context Protocol (MCP) |
+| Node.js 18+ | TypeScript 5.x | Model Context Protocol (MCP) |
+
+---
+
+## 🛡️ Security & Responsible Disclosure
+
+- All persistent data is stored locally (default: project directory or `MCP_STORAGE_PATH`)
+- No external API calls unless configured
+- Agents/users are responsible for privacy of stored thoughts and tasks
+- To report security issues, please [open an issue](https://github.com/your-org/branch-thinking-mcp/issues) or email the maintainer.
+- See CONTRIBUTING for responsible disclosure
+
+---
+
+## ♿ Accessibility & Internationalization
+
+- All badges/images have descriptive alt text.
+- English is the default language; contributions for translations are welcome.
+- Please open a PR or issue if you want to help localize this tool.
+
+| ![Node.js](https://img.shields.io/badge/Node.js-18%2B-green?logo=node.js) | ![TypeScript](https://img.shields.io/badge/TypeScript-4.x-blue?logo=typescript) | ![MCP](https://img.shields.io/badge/MCP-Server-orange?logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHZpZXdCb3g9IjAgMCAyMCAyMCIgZmlsbD0ibm9uZSI+PHJlY3Qgd2lkdGg9IjIwIiBoZWlnaHQ9IjIwIiByeD0iNSIgZmlsbD0iI0ZGMzYwMCIvPjwvc3ZnPg==) |
+|---|---|---|
+| Node.js 18+ | TypeScript 5.x | Model Context Protocol (MCP) |
 
 ---
 
 ## 🧪 Testing & Quality
+
+- Run all tests: `pnpm test`
+- Lint code: `pnpm lint`
+- Type-check: `pnpm build`
+- All code blocks and lists are markdownlint compliant.
+- CI/CD workflows lint, test, and build on every PR (see `.github/workflows/ci.yml`).
+- Advanced config: Edit `src/branchManager.ts` for scoring/AI logic
 
 - Run all tests: `pnpm test`
 - Lint code: `pnpm lint`
@@ -329,6 +490,25 @@ A: Extend `handleCommand` in `src/index.ts` and document it in the README.
 ## 📝 Changelog
 
 See [CHANGELOG.md](./CHANGELOG.md) for recent updates.
+
+---
+
+## 🤖 FAQ for Agents
+
+**Q: How do I know which branch or thought to use?**  
+A: Use `list` to see all branches, `history [branchId]` to see thoughts, and always keep track of IDs.
+
+**Q: How do I ensure my workflow is agent-compatible?**  
+A: Use only documented commands, specify IDs explicitly, and check for errors after each major action.
+
+**Q: What’s the best way to link ideas?**  
+A: Use `link-thoughts` to connect supporting, related, or contrasting thoughts. Review the knowledge graph with `visualize`.
+
+**Q: How do I get the most out of the AI features?**  
+A: Use `summarize-branch`, `insights`, and `review-branch` after adding or updating thoughts for instant feedback and suggestions.
+
+**Q: What should I do after code changes?**  
+A: Always run `pnpm lint` and `pnpm build` to catch TypeScript and runtime errors early.
 
 ---
 

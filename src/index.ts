@@ -393,25 +393,30 @@ AI-native tool for managing, visualizing, and reasoning over branching thoughts,
 
 ## 🛠️ Core Commands
 
-- \`list\` — Show all branches and their status
-- \`focus [branchId]\` — Switch focus to a branch
-- \`history [branchId?]\` — Chronological thought history
-- \`insights [branchId?]\` — Recent AI-generated insights
-- \`crossrefs [branchId?]\` — All cross-references for a branch
-- \`hub-thoughts [branchId?]\` — Thoughts with highest cross-branch connectivity
-- \`semantic-search [query]\` — Find similar thoughts (embeddings)
-- \`link-thoughts [from] [to] [type] [reason?]\` — Explicitly link thoughts
-- \`add-snippet [content] [tags]\` — Add code snippet
-- \`snippet-search [query]\` — Search code snippets
-- \`summarize-branch [branchId?]\` — Branch summary
-- \`doc-thought [thoughtId]\` — Auto-generate documentation
-- \`extract-tasks [branchId?]\` — Extract actionable items
-- \`list-tasks [branchId] [status] [assignee] [due]\` — Filtered task list
-- \`update-task-status [taskId] [status]\` — Update a task
-- \`summarize-tasks [branchId]\` — Task summary
-- \`review-branch [branchId?]\` — AI code/thought review
-- \`visualize [branchId?]\` — Output JSON+Mermaid graph
-- \`ask [question]\` — AI answer from knowledge base
+- Remember you must always start with new branch and thoughts.
+- Always keep track of ids.
+- When creating a branch give it random id.
+- \`create-branch [optional:branchName]\` — Create a new branch for organizing related thoughts, tasks, or code. If no name is provided, generate a unique random name/ID. Always start new work in a new branch.
+- \`add-thought [branchId] [content] [type]\` — Add a new thought to the specified branch. Provide the branch ID, the content of the thought (idea, analysis, observation, etc.), and an optional type for categorization.
+- \`link-thoughts [fromThoughtId] [toThoughtId] [type] [reason]\` — Create a semantic link between two thoughts, specifying the relationship type (supports, contradicts, related, expands, refines, etc.) and an optional reason for the connection.
+- \`list\` — Retrieve a list of all branches, including their IDs and current status (active/inactive).
+- \`focus [branchId]\` — Set the active context to the specified branch, so all subsequent commands operate on this branch.
+- \`history [branchId?]\` — Display the chronological history of thoughts and actions within a branch. If no branchId is provided, use the current active branch.
+- \`insights [branchId?]\` — Show recent AI-generated insights for the branch, such as patterns, summaries, or recommendations.
+- \`crossrefs [branchId?]\` — List all cross-references (links to other branches or thoughts) for the branch.
+- \`hub-thoughts [branchId?]\` — Identify the most influential or highly connected thoughts in the branch.
+- \`semantic-search [query]\` — Find thoughts across all branches that are semantically similar to the provided query using vector embeddings.
+- \`add-snippet [content] [tags]\` — Save a code snippet with descriptive tags for later search and reference.
+- \`snippet-search [query]\` — Search all saved code snippets by content or tag.
+- \`summarize-branch [branchId?]\` — Generate a concise summary of all thoughts and insights in the branch.
+- \`doc-thought [thoughtId]\` — Automatically generate documentation for a specific thought, providing context and explanation.
+- \`extract-tasks [branchId?]\` — Extract actionable tasks from the thoughts in a branch using AI analysis.
+- \`list-tasks [branchId] [status] [assignee] [due]\` — List all tasks in a branch, with optional filters for status, assignee, or due date.
+- \`update-task-status [taskId] [status]\` — Update the status of a specific task (e.g., open, in_progress, closed).
+- \`summarize-tasks [branchId]\` — Provide a summary of the status and key points of all tasks in a branch.
+- \`review-branch [branchId?]\` — Run an AI-powered review of the branch’s thoughts or code, surfacing suggestions and improvements.
+- \`visualize [branchId?]\` — Output a JSON or Mermaid diagram graph of the branch, showing thoughts, tasks, and their relationships.
+- \`ask [question]\` — Ask an AI-powered question about the knowledge base or branch content, and receive an answer based on the current context.
 
 ---
 
