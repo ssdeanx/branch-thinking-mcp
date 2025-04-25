@@ -1,30 +1,98 @@
 #!/usr/bin/env node
 
+
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  Tool,
-} from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, ListToolsRequestSchema, Tool } from "@modelcontextprotocol/sdk/types.js";
 import { BranchManager } from './branchManager.js';
-import { BranchingThoughtInput } from './types.js';
+import { AutoExecutionPolicy, CommandSafetyValidator, WorkflowPlanner, AutoExecutionPolicyRule } from './autoExecution.js';
+import { BranchingThoughtInput, VisualizationOptions } from './types.js';
 import chalk from 'chalk';
 
+enum SessionState {
+  INIT = 'INIT',
+  BRANCH_CREATED = 'BRANCH_CREATED',
+  BRANCH_FOCUSED = 'BRANCH_FOCUSED',
+  THOUGHT_ADDED = 'THOUGHT_ADDED',
+  ACTIVE = 'ACTIVE',
+  RESET = 'RESET',
+}
 class BranchingThoughtServer {
+  private autoExecutionPolicy = new AutoExecutionPolicy({
+    rules: [
+      { type: 'add-thought', safe: true },
+      { type: 'focus', safe: true },
+      { type: 'create-branch', safe: true },
+      { type: 'semantic-search', safe: true },
+      { type: 'extract-tasks', safe: true },
+      // Add more as needed, user can modify at runtime
+    ]
+  });
+  private commandSafetyValidator = new CommandSafetyValidator(this.autoExecutionPolicy);
+  private workflowPlanner = new WorkflowPlanner();
+  private sessionState: SessionState = SessionState.INIT;
+
+  // Map session states to allowed commands
+  private allowedCommands: Record<SessionState, string[]> = {
+    [SessionState.INIT]: ['create-branch', 'list'],
+    [SessionState.BRANCH_CREATED]: ['focus', 'list', 'create-branch'],
+    [SessionState.BRANCH_FOCUSED]: [
+      'add-thought', 'insights', 'crossrefs', 'hub-thoughts', 'semantic-search',
+      'link-thoughts', 'add-snippet', 'snippet-search', 'summarize-branch',
+      'doc-thought', 'extract-tasks', 'review-branch', 'visualize', 'ask',
+      'focus', 'list', 'create-branch', 'history', 'summarize-tasks', 'advance-task', 'assign-task'
+    ],
+    [SessionState.THOUGHT_ADDED]: [
+      'insights', 'crossrefs', 'hub-thoughts', 'semantic-search',
+      'link-thoughts', 'add-snippet', 'snippet-search', 'summarize-branch',
+      'doc-thought', 'extract-tasks', 'review-branch', 'visualize', 'ask',
+      'focus', 'list', 'create-branch', 'history', 'summarize-tasks', 'advance-task', 'assign-task', 'add-thought'
+    ],
+    [SessionState.ACTIVE]: [
+      'add-thought', 'insights', 'crossrefs', 'hub-thoughts', 'semantic-search',
+      'link-thoughts', 'add-snippet', 'snippet-search', 'summarize-branch',
+      'doc-thought', 'extract-tasks', 'review-branch', 'visualize', 'ask',
+      'focus', 'list', 'create-branch', 'history', 'summarize-tasks', 'advance-task', 'assign-task',
+      'reset-session', 'clear-cache', 'get-cache-stats'
+    ],
+    [SessionState.RESET]: ['create-branch', 'list'],
+  };
+
+  private updateSessionState(commandType: string) {
+    switch (commandType) {
+      case 'create-branch':
+        this.sessionState = SessionState.BRANCH_CREATED;
+        break;
+      case 'focus':
+        this.sessionState = SessionState.BRANCH_FOCUSED;
+        break;
+      case 'add-thought':
+        this.sessionState = SessionState.THOUGHT_ADDED;
+        break;
+      case 'reset-session':
+        this.sessionState = SessionState.INIT;
+        break;
+      default:
+        if (
+          this.sessionState === SessionState.THOUGHT_ADDED ||
+          this.sessionState === SessionState.BRANCH_FOCUSED
+        ) {
+          this.sessionState = SessionState.ACTIVE;
+        }
+        break;
+    }
+  }
   private branchManager = new BranchManager();
 
   // Made async to allow awaiting handleCommand
   async processThought(input: unknown): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
     try {
       const inputData = input as any;
-      
       // Handle commands if present
       if (inputData.command) {
         // Await handleCommand since it is now async
         return await this.handleCommand(inputData.command);
       }
-
       // Handle regular thought input (single or batch)
       let lastThought;
       let branch;
@@ -66,42 +134,112 @@ class BranchingThoughtServer {
       };
     }
   }
-
   // Made async to allow await for new commands
-  private async handleCommand(command: { 
-    type: string; 
-    branchId?: string; 
-    query?: string; 
-    topN?: number; 
-    fromThoughtId?: string; 
-    toThoughtId?: string; 
-    linkType?: string; 
-    reason?: string; 
-    tags?: string[]; 
-    author?: string; 
-    content?: string; 
-    thoughtId?: string; 
+   private async handleCommand(command: {
+    type: string;
+    branchId?: string;
+    query?: string;
+    topN?: number;
+    fromThoughtId?: string;
+    toThoughtId?: string;
+    linkType?: string;
+    reason?: string;
+    tags?: string[];
+    author?: string;
+    content?: string;
+    thoughtId?: string;
     question?: string;
     status?: string;
     assignee?: string;
     due?: string;
     taskId?: string;
     parentBranchId?: string;
+    rule?: AutoExecutionPolicyRule; // for policy management commands
+    autoVisualize?: boolean;
   }): Promise<{ content: Array<{ type: string; text: string }> }> {
+    console.error(`[CMD] Received command: ${command.type}`);
     try {
-      switch (command.type) {
-        case 'create-branch': {
-          if (!command.branchId) throw new Error('branchId required for create-branch');
-          const branch = this.branchManager.createBranch(command.branchId, command.parentBranchId);
-          return {
-            content: [{
-              type: "text",
-              text: `Created branch '${branch.id}'${command.parentBranchId ? ` with parent '${command.parentBranchId}'` : ''}.`
-            }]
-          };
+      // === Policy Management Commands ===
+      if (command.type === 'add-policy-rule' && command.rule) {
+        this.autoExecutionPolicy.addRule(command.rule);
+        return { content: [{ type: 'text', text: 'Policy rule added.' }] };
+      }
+      if (command.type === 'remove-policy-rule' && command.rule) {
+        this.autoExecutionPolicy.removeRule(command.rule.type, command.rule.pattern);
+        return { content: [{ type: 'text', text: 'Policy rule removed.' }] };
+      }
+      if (command.type === 'list-policy-rules') {
+        return { content: [{ type: 'text', text: JSON.stringify(this.autoExecutionPolicy.listRules(), null, 2) }] };
+      }
+      // === Multi-step Workflow Planning ===
+      const workflow = this.workflowPlanner.plan(command);
+      let results: Array<{ type: string; text: string }> = [];
+      for (const step of workflow) {
+        // === Safety Validation ===
+        const isSafe = this.commandSafetyValidator.isSafe({ type: step.type, content: step.params.content });
+        if (!isSafe) {
+          results.push({ type: 'text', text: `Command '${step.type}' is not marked safe for auto-execution. Skipping.` });
+          continue;
         }
+        // Only execute if allowed in current state
+        if (!this.allowedCommands[this.sessionState].includes(step.type)) {
+          results.push({ type: 'text', text: `Command '${step.type}' is not allowed in the current session state (${this.sessionState}).` });
+          continue;
+        }
+        // Additional preconditions for branch-dependent commands
+        const commandsRequiringBranch = [
+          'add-thought', 'insights', 'crossrefs', 'hub-thoughts', 'semantic-search',
+          'link-thoughts', 'add-snippet', 'snippet-search', 'summarize-branch',
+          'doc-thought', 'extract-tasks', 'review-branch', 'visualize', 'ask',
+          'history', 'summarize-tasks', 'advance-task', 'assign-task'
+        ];
+        if (commandsRequiringBranch.includes(step.type)) {
+          const branchId = step.params.branchId || this.branchManager.getActiveBranch()?.id;
+          if (!branchId || !this.branchManager.getBranch(branchId)) {
+            results.push({ type: 'text', text: `Command '${step.type}' requires a valid branch. Please create and focus a branch first.` });
+            continue;
+          }
+        }
+        // State transition after successful command
+        this.updateSessionState(step.type);
+        console.error(`[STATE] Session state is now: ${this.sessionState}`);
+        // === Actual Command Execution (call original switch) ===
+        // Recurse for sub-commands or call switch for atomic ones
+        const atomicResult = await this._executeAtomicCommand(step.type, step.params);
+        if (atomicResult?.content) results = results.concat(atomicResult.content);
+      }
+      return { content: results };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: error instanceof Error ? error.message : String(error),
+            status: 'failed'
+          }, null, 2)
+        }]
+      };
+    }
+  }
+  // Extracted atomic command executor (original switch/case logic)
+  private async _executeAtomicCommand(type: string, params: any): Promise<{ content: Array<{ type: string; text: string }> }> {
+    switch (type) {
+        case 'create-branch': {
+           if (!params.branchId) throw new Error('branchId required for create-branch');
+           const branch = this.branchManager.createBranch(params.branchId, params.parentBranchId);
+           const content: Array<{ type: string; text: string }> = [{
+             type: "text",
+             text: `Created branch '${branch.id}'${params.parentBranchId ? ` with parent '${params.parentBranchId}'` : ''}.`
+           }];
+           if (params.autoVisualize) {
+             const options = { branchId: branch.id } as VisualizationOptions;
+             const vizData = this.branchManager.visualizeBranch(options);
+             content.push({ type: "text", text: JSON.stringify({ visualization: vizData }, null, 2) });
+           }
+           return { content };
+         }
         case 'insights': {
-          const branchId = command.branchId || this.branchManager.getActiveBranch()?.id;
+          const branchId = params.branchId || this.branchManager.getActiveBranch()?.id;
           if (!branchId) {
             throw new Error('No active branch and no branchId provided');
           }
@@ -132,36 +270,31 @@ class BranchingThoughtServer {
             }]
           };
         }
-
         case 'focus': {
-          if (!command.branchId) {
+          if (!params.branchId) {
             throw new Error('branchId required for focus command');
           }
-          this.branchManager.setActiveBranch(command.branchId);
-          const branch = this.branchManager.getBranch(command.branchId)!;
+          this.branchManager.setActiveBranch(params.branchId);
+          const branch = this.branchManager.getBranch(params.branchId)!;
           const formattedStatus = await this.branchManager.formatBranchStatus(branch);
           console.error(formattedStatus);
-          
           return {
             content: [{
               type: "text",
               text: JSON.stringify({
                 status: 'success',
-                message: `Now focused on branch: ${command.branchId}`,
-                activeBranch: command.branchId
+                message: `Now focused on branch: ${params.branchId}`,
+                activeBranch: params.branchId
               }, null, 2)
             }]
           };
         }
-
         case 'history': {
-          const branchId = command.branchId || this.branchManager.getActiveBranch()?.id;
+          const branchId = params.branchId || this.branchManager.getActiveBranch()?.id;
           if (!branchId) {
             throw new Error('No active branch and no branchId provided');
           }
-          const branch = this.branchManager.getBranch(branchId)!;
           const history = await this.branchManager.getBranchHistory(branchId);
-          
           return {
             content: [{
               type: "text",
@@ -169,9 +302,8 @@ class BranchingThoughtServer {
             }]
           };
         }
-
         case 'crossrefs': {
-          const branchId = command.branchId || this.branchManager.getActiveBranch()?.id;
+          const branchId = params.branchId || this.branchManager.getActiveBranch()?.id;
           if (!branchId) throw new Error('No active branch and no branchId provided');
           const branch = this.branchManager.getBranch(branchId)!;
           const crossRefs = branch.crossRefs || [];
@@ -187,7 +319,7 @@ class BranchingThoughtServer {
         }
         case 'hub-thoughts': {
           // List thoughts with the highest cross-branch connections/scores
-          const branchId = command.branchId || this.branchManager.getActiveBranch()?.id;
+          const branchId = params.branchId || this.branchManager.getActiveBranch()?.id;
           if (!branchId) throw new Error('No active branch and no branchId provided');
           const branch = this.branchManager.getBranch(branchId)!;
           const thoughts = branch.thoughts || [];
@@ -208,21 +340,25 @@ class BranchingThoughtServer {
           };
         }
         case 'semantic-search': {
-          if (!('query' in command) || typeof command.query !== 'string') throw new Error('semantic-search requires a query string');
-          const query = command.query;
-          const topN = typeof command.topN === 'number' ? command.topN : 5;
-          // semanticSearch returns a Promise, so we must handle this asynchronously
-          // But handleCommand is not async, so we throw an error if used in sync context
-          // This is a limitation of the current design; ideally, processThought should be async
-          // For now, we block with a deasync workaround (not ideal), or we can throw an error
-          // For demonstration, we'll throw an error if not handled async
-          throw new Error('semantic-search is only available via async API. Please call processThought asynchronously.');
+          if (!('query' in params) || typeof params.query !== 'string') {
+            throw new Error('semantic-search requires a query string');
+          }
+          const query = params.query;
+          const topN = typeof params.topN === 'number' ? params.topN : 5;
+          // Perform semantic search
+          const results = await this.branchManager.semanticSearch(query, topN);
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({ query, topN, results }, null, 2)
+            }]
+          };
         }
         case 'link-thoughts': {
-          if (!('fromThoughtId' in command) || !('toThoughtId' in command) || !('linkType' in command)) {
+          if (!('fromThoughtId' in params) || !('toThoughtId' in params) || !('linkType' in params)) {
             throw new Error('link-thoughts requires fromThoughtId, toThoughtId, and linkType');
           }
-          const { fromThoughtId, toThoughtId, linkType, reason } = command;
+          const { fromThoughtId, toThoughtId, linkType, reason } = params;
           const validLinkType = linkType as 'supports' | 'contradicts' | 'related' | 'expands' | 'refines';
           const success = this.branchManager.linkThoughts(fromThoughtId!, toThoughtId!, validLinkType, reason);
           return {
@@ -239,8 +375,8 @@ class BranchingThoughtServer {
           };
         }
         case 'add-snippet': {
-          if (!('content' in command) || typeof command.content !== 'string' || !('tags' in command) || !Array.isArray(command.tags)) throw new Error('add-snippet requires content (string) and tags (array)');
-          const snippet = this.branchManager.addSnippet(command.content, command.tags, typeof command.author === 'string' ? command.author : undefined);
+          if (!('content' in params) || typeof params.content !== 'string' || !('tags' in params) || !Array.isArray(params.tags)) throw new Error('add-snippet requires content (string) and tags (array)');
+          const snippet = this.branchManager.addSnippet(params.content, params.tags, typeof params.author === 'string' ? params.author : undefined);
           return {
             content: [{
               type: "text",
@@ -249,8 +385,8 @@ class BranchingThoughtServer {
           };
         }
         case 'snippet-search': {
-          if (!('query' in command) || typeof command.query !== 'string') throw new Error('snippet-search requires a query string');
-          const results = this.branchManager.searchSnippets(command.query, typeof command.topN === 'number' ? command.topN : 5);
+          if (!('query' in params) || typeof params.query !== 'string') throw new Error('snippet-search requires a query string');
+          const results = this.branchManager.searchSnippets(params.query, typeof params.topN === 'number' ? params.topN : 5);
           return {
             content: [{
               type: "text",
@@ -259,7 +395,7 @@ class BranchingThoughtServer {
           };
         }
         case 'summarize-branch': {
-          const branchId = command.branchId || this.branchManager.getActiveBranch()?.id;
+          const branchId = params.branchId || this.branchManager.getActiveBranch()?.id;
           if (!branchId) throw new Error('No branchId provided and no active branch.');
           return {
             content: [{
@@ -269,16 +405,16 @@ class BranchingThoughtServer {
           };
         }
         case 'doc-thought': {
-          if (!('thoughtId' in command) || typeof command.thoughtId !== 'string') throw new Error('doc-thought requires a thoughtId (string)');
+          if (!('thoughtId' in params) || typeof params.thoughtId !== 'string') throw new Error('doc-thought requires a thoughtId (string)');
           return {
             content: [{
               type: "text",
-              text: await this.branchManager.summarizeThought(command.thoughtId)
+              text: await this.branchManager.summarizeThought(params.thoughtId)
             }]
           };
         }
         case 'extract-tasks': {
-          const branchId = command.branchId || this.branchManager.getActiveBranch()?.id;
+          const branchId = params.branchId || this.branchManager.getActiveBranch()?.id;
           const tasks = await this.branchManager.extractTasks(branchId);
           return {
             content: [{
@@ -288,10 +424,10 @@ class BranchingThoughtServer {
           };
         }
         case 'list-tasks': {
-          const branchId = command.branchId || this.branchManager.getActiveBranch()?.id;
-          const status = command.status;
-          const assignee = command.assignee;
-          const due = command.due;
+          const branchId = params.branchId || this.branchManager.getActiveBranch()?.id;
+          const status = params.status;
+          const assignee = params.assignee;
+          const due = params.due;
           const tasks = await this.branchManager.queryTasks({ branchId, status, assignee, due });
           return {
             content: [{
@@ -301,8 +437,8 @@ class BranchingThoughtServer {
           };
         }
         case 'update-task-status': {
-          const taskId = command.taskId;
-          const status = command.status;
+          const taskId = params.taskId;
+          const status = params.status;
           if (!taskId || !status) throw new Error('update-task-status requires taskId and status');
           const updated = await this.branchManager.updateTaskStatus(taskId, status as 'open' | 'in_progress' | 'closed');
           return {
@@ -313,7 +449,7 @@ class BranchingThoughtServer {
           };
         }
         case 'summarize-tasks': {
-          const branchId = command.branchId || this.branchManager.getActiveBranch()?.id;
+          const branchId = params.branchId || this.branchManager.getActiveBranch()?.id;
           const summary = await this.branchManager.summarizeTasks(branchId);
           return {
             content: [{
@@ -323,7 +459,7 @@ class BranchingThoughtServer {
           };
         }
         case 'review-branch': {
-          const branchId = command.branchId || this.branchManager.getActiveBranch()?.id;
+          const branchId = params.branchId || this.branchManager.getActiveBranch()?.id;
           if (!branchId) throw new Error('No branchId provided and no active branch.');
           const reviews = await this.branchManager.reviewBranch(branchId);
           return {
@@ -334,36 +470,16 @@ class BranchingThoughtServer {
           };
         }
         case 'visualize': {
-          const branchId = command.branchId || this.branchManager.getActiveBranch()?.id;
-          const data = this.branchManager.visualizeBranch(branchId);
-
-          // Build Mermaid diagram string
-          let mermaid = 'graph TD\n';
-          for (const node of data.nodes) {
-            mermaid += `  ${node.id.replace(/[^a-zA-Z0-9_]/g, '_')}[${node.label}]\n`;
-          }
-          for (const edge of data.edges) {
-            const from = edge.from.replace(/[^a-zA-Z0-9_]/g, '_');
-            const to = edge.to.replace(/[^a-zA-Z0-9_]/g, '_');
-            mermaid += `  ${from} --|${edge.label}|--> ${to}\n`;
-          }
-
+          // Pass full visualization options
+          const options = params as VisualizationOptions;
+          const data = this.branchManager.visualizeBranch(options);
           return {
-            content: [
-              {
-                type: "json",
-                text: JSON.stringify({ branchId, visualization: data }, null, 2)
-              },
-              {
-                type: "mermaid",
-                text: mermaid
-              }
-            ]
+            content: [{ type: "text", text: JSON.stringify(data, null, 2) }]
           };
         }
         case 'ask': {
-          if (!('question' in command) || typeof command.question !== 'string') throw new Error('ask requires a question string');
-          const question = command.question;
+          if (!('question' in params) || typeof params.question !== 'string') throw new Error('ask requires a question string');
+          const question = params.question;
           const answer = await this.branchManager.askQuestion(question);
           return {
             content: [{
@@ -372,73 +488,148 @@ class BranchingThoughtServer {
             }]
           };
         }
+        case 'reset-session': {
+          // already transitioned
+          return { content: [{ type: "text", text: 'Session has been reset.' }] };
+        }
+        case 'clear-cache': {
+          this.branchManager.clearCache();
+          return { content: [{ type: "text", text: 'Cache cleared.' }] };
+        }
+        case 'get-cache-stats': {
+          const stats = this.branchManager.getCacheStats();
+          return { content: [{ type: "text", text: JSON.stringify(stats, null, 2) }] };
+        }
       }
       // Default return for unknown command types
       return {
         content: [{
           type: "text",
-          text: `Unknown command type: ${command.type}`
-        }]
-      };
-    }
-    catch (error) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            error: error instanceof Error ? error.message : String(error),
-            status: 'failed'
-          }, null, 2)
+          text: `Unknown command type: ${type}`
         }]
       };
     }
   }
-}
 
 const BRANCHING_THOUGHT_TOOL: Tool = {
   name: "branch-thinking",
   description: `
 # Branch-Thinking Tool
 
-The Branch-Thinking Tool is an AI-powered assistant for managing branching thoughts, tasks, insights, and cross-references. It provides a comprehensive set of commands and workflows to streamline ideation and execution.
+**Purpose:** Use branching commands to create, navigate, and analyze thought branches and tasks.
 
-## Core Features
-- Semantic Search & Embeddings: Retrieve related thoughts via high-quality vector search.
-- Visualization: Generate JSON and Mermaid diagrams of thought graphs and tasks.
-- Insight Generation: Auto-generate and refine insights from thought metadata.
-- Task Management: Extract, list, assign, and advance tasks with audit trails.
-- Branch & Profile Management: Create, focus, and manage branches and profiles.
+**Usage:** Provide a JSON payload with 'type' and relevant parameters in 'args' object. The tool returns an array of items in the format { type: string, text: string }.
 
-## Commands
-- Always start by creating a new branch
-- \`create-branch [branchId?]\`: Create a new branch or switch to an existing one.
-- \`add-thought [branchId] [content] [--type TYPE] [--keyPoints KP] [--confidence FLOAT] [--profileId ID] [--crossRefs JSON]\`: Add a new thought with optional metadata.
-- \`list-branches\`: List all branches with status and active indicator.
-- \`focus [branchId]\`: Set the active branch context.
-- \`history [branchId?]\`: Display chronological history of thoughts and tasks.
-- \`insights [branchId?]\`: Show cached or real-time insights.
-- \`crossrefs [branchId?]\`: List cross-references within and across branches.
-- \`hub-thoughts [branchId?]\`: Identify top thoughts by score and cross-reference count.
-- \`semantic-search [query] [--topN N]\`: Find semantically similar thoughts across branches.
-- \`link-thoughts [fromId] [toId] [type] [reason?]\`: Create a semantic link between two thoughts.
-- \`extract-tasks [branchId?]\`: Generate actionable tasks.
-- \`list-tasks [branchId] [--status STATUS] [--assignee NAME] [--due DATE]\`: List tasks with optional filters.
-- \`update-task-status [taskId] [status]\`: Advance a task's status.
-- \`summarize-branch [branchId?]\`: Generate a concise summary of branch thoughts and insights.
-- \`summarize-tasks [branchId?]\`: Summarize task statuses and key points.
-- \`review-branch [branchId?]\`: Get an AI-driven review of branch code or content.
-- \`visualize [branchId?]\`: Output JSON and Mermaid diagrams.
-- \`add-snippet [content] [tags] [author?]\`: Save code snippets.
-- \`snippet-search [query] [--topN N]\`: Search saved snippets.
-- \`doc-thought [thoughtId]\`: Generate detailed documentation for a thought.
-- \`ask [question]\`: Ask a free-form AI question.
+**Supported Commands:**
+- create-branch: { type: 'create-branch', branchId }
+- focus: { type: 'focus', branchId }
+- add-thought: { type: 'add-thought', branchId, content }
+- semantic-search: { type: 'semantic-search', query, topN? }
+- extract-tasks: { type: 'extract-tasks', branchId? }
+- visualize: { type: 'visualize', branchId?, options? }
+- list-branches: { type: 'list-branches' }
+- history: { type: 'history', branchId }
+- insights: { type: 'insights', branchId }
+- crossrefs: { type: 'crossrefs', branchId }
+- hub-thoughts: { type: 'hub-thoughts', branchId }
+- link-thoughts: { type: 'link-thoughts', fromThoughtId, toThoughtId, linkType, reason? }
+- add-snippet: { type: 'add-snippet', content, tags, author? }
+- snippet-search: { type: 'snippet-search', query, topN? }
+- summarize-branch: { type: 'summarize-branch', branchId? }
+- doc-thought: { type: 'doc-thought', thoughtId }
+- review-branch: { type: 'review-branch', branchId? }
+- ask: { type: 'ask', question }
+- summarize-tasks: { type: 'summarize-tasks', branchId? }
+- advance-task: { type: 'advance-task', taskId, status }
+- assign-task: { type: 'assign-task', taskId, assignee }
+- reset-session: { type: 'reset-session' }
+- clear-cache: { type: 'clear-cache' }
+- get-cache-stats: { type: 'get-cache-stats' }
 
-## Quick Start Example
-- \`create-branch research_idea\`
-- \`focus research_idea\`
-- \`add-thought research_idea "Define hypothesis on AI Flow" --type analysis --keyPoints hypothesis,AI --confidence 0.8\`
-- \`extract-tasks\`
-- \`insights\`
+**Visualization Options:**
+- clustering: { type: 'clustering', algorithm? }
+- centrality: { type: 'centrality', metric? }
+- overlays: { type: 'overlays', features? }
+- analytics: { type: 'analytics', metrics? }
+
+**Example Calls and Expected Responses:**
+
+~~~json
+// Add a thought
+{ "name": "branch-thinking", "args": { "type": "add-thought", "branchId": "research", "content": "Define MCP best practices" } }
+// →
+[{"type":"text","text":"Thought added to branch research."}]
+~~~
+
+~~~json
+// Get insights
+{ "name": "branch-thinking", "args": { "type": "insights", "branchId": "research" } }
+// →
+[{"type":"text","text":"Insights for branch research: ['Best practices cluster around workflow safety and semantic search.', 'Cross-references indicate high reuse of planning patterns.']"}]
+~~~
+
+~~~json
+// Get cross-references
+{ "name": "branch-thinking", "args": { "type": "crossrefs", "branchId": "research" } }
+// →
+[{"type":"text","text":"Cross-references for branch research: [{ from: 't1', to: 't3', type: 'supports', reason: 't1 evidence for t3' }, { from: 't2', to: 't4', type: 'related' }]"}]
+~~~
+
+~~~json
+// Extract tasks
+{ "name": "branch-thinking", "args": { "type": "extract-tasks", "branchId": "research" } }
+// →
+[{"type":"text","text":"Tasks extracted: [{ id: 'task-123', content: 'Document MCP safety rules', status: 'open' }]"}]
+~~~
+
+~~~json
+// Summarize tasks
+{ "name": "branch-thinking", "args": { "type": "summarize-tasks", "branchId": "research" } }
+// →
+[{"type":"text","text":"Task summary: 1 open, 2 in progress, 0 closed."}]
+~~~
+
+~~~json
+// Advance a task
+{ "name": "branch-thinking", "args": { "type": "advance-task", "taskId": "task-123", "status": "in_progress" } }
+// →
+[{"type":"text","text":"Task task-123 status updated to in_progress."}]
+~~~
+
+~~~json
+// Assign a task
+{ "name": "branch-thinking", "args": { "type": "assign-task", "taskId": "task-123", "assignee": "alice" } }
+// →
+[{"type":"text","text":"Task task-123 assigned to alice."}]
+~~~
+
+~~~json
+// Semantic search
+{ "name": "branch-thinking", "args": { "type": "semantic-search", "query": "workflow planning", "topN": 3 } }
+// →
+[{"type":"text","text":"Top 3 semantic matches for 'workflow planning' returned."}]
+~~~
+
+~~~json
+// Link thoughts
+{ "name": "branch-thinking", "args": { "type": "link-thoughts", "fromThoughtId": "t1", "toThoughtId": "t2", "linkType": "supports" } }
+// →
+[{"type":"text","text":"Linked thought t1 to t2 as 'supports'."}]
+~~~
+
+~~~json
+// Summarize branch
+{ "name": "branch-thinking", "args": { "type": "summarize-branch", "branchId": "research" } }
+// →
+[{"type":"text","text":"Summary for branch research: ..."}]
+~~~
+
+~~~json
+// Review branch
+{ "name": "branch-thinking", "args": { "type": "review-branch", "branchId": "research" } }
+// →
+[{"type":"text","text":"Branch research reviewed. 2 suggestions found."}]
+~~~
 `,
   inputSchema: {
     type: "object",
@@ -552,6 +743,10 @@ The Branch-Thinking Tool is an AI-powered assistant for managing branching thoug
             type: "string",
             description: "Optional: Parent branch ID for hierarchical organization when creating a branch."
           },
+          autoVisualize: {
+            type: "boolean",
+            description: "Optional: Automatically visualize the branch after creation."
+          },
         },
         required: ["type"]
       }
@@ -566,7 +761,7 @@ The Branch-Thinking Tool is an AI-powered assistant for managing branching thoug
 const server = new Server(
   {
     name: "branch-thinking-server",
-    version: "0.1.1",
+    version: "0.1.2",
   },
   {
     capabilities: {
@@ -585,7 +780,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (request.params.name === "branch-thinking") {
     return thinkingServer.processThought(request.params.arguments);
   }
-
   return {
     content: [{
       type: "text",
@@ -600,7 +794,6 @@ async function runServer() {
   await server.connect(transport);
   console.error("Branch Thinking MCP Server running on stdio");
 }
-
 runServer().catch((error) => {
   console.error("Fatal error running server:", error);
   process.exit(1);

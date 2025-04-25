@@ -107,6 +107,15 @@ export interface VisualizationNode {
   id: string;
   label: string;
   type: 'thought' | 'branch' | 'insight' | 'crossref' | 'snippet';
+  // Visualization/analytics enhancements
+  highlight?: boolean;
+  cluster?: number;
+  clusterLabel?: string;
+  clusterColor?: string;
+  centrality?: number;
+  taskStatus?: string;
+  taskPriority?: string | number;
+  nextAction?: boolean;
 }
 
 export interface VisualizationEdge {
@@ -116,9 +125,23 @@ export interface VisualizationEdge {
   type?: string;
 }
 
+export interface VisualizationOptions {
+  branchId?: string;
+  branches?: string[];
+  layout?: 'hierarchical' | 'force' | 'radial';
+  showClusters?: boolean;
+  edgeBundling?: boolean;
+  focusNode?: string;
+  levelOfDetail?: 'low' | 'medium' | 'high' | 'auto';
+  progressiveLoading?: boolean;
+  plugins?: string[];
+  viewer?: string;
+}
+
 export interface VisualizationData {
   nodes: VisualizationNode[];
   edges: VisualizationEdge[];
+  meta?: VisualizationOptions;
 }
 
 export interface ExternalSearchResult {

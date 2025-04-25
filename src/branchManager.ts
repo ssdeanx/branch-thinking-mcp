@@ -1,6 +1,27 @@
 import chalk from 'chalk';
-import { ThoughtBranch, ThoughtData, Insight, CrossReference, InsightType, CrossRefType, BranchingThoughtInput, ThoughtLink, CodeSnippet, TaskItem, ReviewSuggestion, VisualizationData, VisualizationNode, VisualizationEdge, ExternalSearchResult, Profile } from './types.js';
+import { ThoughtBranch, ThoughtData, Insight, CrossReference, InsightType, CrossRefType, BranchingThoughtInput, ThoughtLink, CodeSnippet, TaskItem, ReviewSuggestion, VisualizationData, VisualizationNode, VisualizationEdge, ExternalSearchResult, Profile, VisualizationOptions } from './types.js';
 import { pipeline, FeatureExtractionPipeline } from '@xenova/transformers';
+import { LRUCache } from 'lru-cache';
+
+/**
+ * Embedding cache for node/thought embeddings.
+ * Uses LRU and TTL for freshness and memory efficiency.
+ */
+const EMBEDDING_CACHE_TTL = 1000 * 60 * 30; // 30 minutes
+const EMBEDDING_CACHE_MAX = 1000;
+
+/**
+ * Summary cache for expensive summarization results.
+ * Uses LRU and TTL for speed and freshness.
+ */
+const SUMMARY_CACHE_TTL = 1000 * 60 * 5; // 5 minutes
+const SUMMARY_CACHE_MAX = 100;
+
+import * as _ from 'lodash';
+import graphlibPkg from '@dagrejs/graphlib';
+import type { Graph as GraphType } from '@dagrejs/graphlib';
+const { Graph, alg } = graphlibPkg as typeof import('@dagrejs/graphlib');
+import { kmeans } from 'ml-kmeans';
 
 // Cosine similarity for two vectors
 function cosineSimilarity(a: number[], b: number[]): number {
@@ -12,9 +33,17 @@ function cosineSimilarity(a: number[], b: number[]): number {
   }
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
-import { LRUCache } from 'lru-cache';
 
 export class BranchManager {
+  /**
+   * Embedding cache with LRU and TTL.
+   */
+  private embeddingCache = new LRUCache<string, number[]>({ max: EMBEDDING_CACHE_MAX, ttl: EMBEDDING_CACHE_TTL });
+  /**
+   * Summary cache for branch summaries (LRU+TTL).
+   */
+  private summaryCache = new LRUCache<string, string>({ max: SUMMARY_CACHE_MAX, ttl: SUMMARY_CACHE_TTL });
+
   // --- New feature fields ---
   private snippets: CodeSnippet[] = [];
   private snippetCounter = 0;
@@ -29,6 +58,18 @@ export class BranchManager {
   private skipNextTaskExtraction: boolean = false;
 
   /**
+   * Invalidate caches for a given thought or branch. Call after mutation.
+   */
+  private invalidateCachesFor(thoughtId?: string, branchId?: string) {
+    if (thoughtId) this.embeddingCache.delete(thoughtId);
+    if (branchId) this.summaryCache.delete(branchId);
+    // Add more cache invalidations as needed
+  }
+
+  // Example: Call this.invalidateCachesFor when a thought/branch/task is updated.
+
+
+  /**
    * Load the summarization pipeline if not already loaded.
    */
   private async getSummarizationPipeline(): Promise<any> {
@@ -41,15 +82,22 @@ export class BranchManager {
   /**
    * Summarize all thoughts in a branch as a digest.
    */
+  /**
+   * Summarize all thoughts in a branch as a digest, using cache for speed.
+   * @param branchId The branch to summarize
+   */
   public async summarizeBranchThoughts(branchId: string): Promise<string> {
+    if (this.summaryCache.has(branchId)) return this.summaryCache.get(branchId)!;
     const branch = this.branches.get(branchId);
     if (!branch) throw new Error('Branch not found');
     const text = branch.thoughts.map(t => t.content).join('\n');
     const summarizer = await this.getSummarizationPipeline();
     const summary = await summarizer(text, { min_length: 20, max_length: 120 });
-    // Use 'any' to access summary_text property regardless of output shape
-    return Array.isArray(summary) ? (summary as any)[0].summary_text : (summary as any).summary_text;
+    const result = Array.isArray(summary) ? (summary as any)[0].summary_text : (summary as any).summary_text;
+    this.summaryCache.set(branchId, result);
+    return result;
   }
+
 
   /**
    * Load the embedding pipeline (MiniLM) if not already loaded.
@@ -127,37 +175,36 @@ export class BranchManager {
    * Handles pooling for MiniLM-style output.
    */
   public async embedText(text: string): Promise<number[]> {
+    const key = this.hashContent(text);
+    // Check LRU first for fastest access
+    if (this.embeddingLRU.has(key)) {
+      return this.embeddingLRU.get(key)!;
+    }
+    // Fallback to larger embeddingCache
+    if (this.embeddingCache.has(key)) {
+      const emb = this.embeddingCache.get(key)!;
+      // Promote to LRU for faster future access
+      this.embeddingLRU.set(key, emb);
+      return emb;
+    }
+    const pipeline = await this.getEmbeddingPipeline();
     const truncated = this.truncateText(text);
-    const hash = this.hashContent(truncated);
-    await this.loadPersistentEmbeddingCache();
-    // Check in-memory LRU cache
-    if (this.embeddingLRU.has(hash)) {
-      return this.embeddingLRU.get(hash)!;
-    }
-    // Check persistent cache
-    if (this.persistentEmbeddingCache[hash]) {
-      this.embeddingLRU.set(hash, this.persistentEmbeddingCache[hash].embedding);
-      return this.persistentEmbeddingCache[hash].embedding;
-    }
-    const embeddingPipeline = await this.getEmbeddingPipeline();
-    const output = await embeddingPipeline(truncated);
-    // MiniLM returns [1, tokens, dim] or { data: [[...]] }
-    let tokenVectors: number[][] = Array.isArray(output) ? output[0] : output.data[0];
-    // Mean pooling: average across tokens
-    const pooled = new Array(tokenVectors[0].length).fill(0);
-    for (const vec of tokenVectors) {
-      for (let i = 0; i < vec.length; i++) {
-        pooled[i] += vec[i];
-      }
-    }
-    for (let i = 0; i < pooled.length; i++) {
-      pooled[i] /= tokenVectors.length;
-    }
-    this.embeddings.set(hash, pooled);
-    this.embeddingLRU.set(hash, pooled);
-    this.persistentEmbeddingCache[hash] = { embedding: pooled, hash };
-    await this.savePersistentEmbeddingCache();
-    return pooled;
+    // Execute pipeline and extract array data
+    const rawOutput: any = await pipeline(truncated, { pooling: 'mean', normalize: true });
+    // rawOutput may be an array or an object with 'data' property
+    const arr: any[] = Array.isArray(rawOutput)
+      ? rawOutput
+      : Array.isArray(rawOutput.data)
+      ? rawOutput.data
+      : ([] as any[]);
+    const first = arr[0];
+    const embedding: number[] = Array.isArray(first)
+      ? (first as number[])
+      : (Array.isArray(arr) ? (arr as unknown as number[]) : []);
+    // Set in both caches
+    this.embeddingLRU.set(key, embedding);
+    this.embeddingCache.set(key, embedding);
+    return embedding;
   }
 
   /**
@@ -869,7 +916,9 @@ ${crossRefs}
    */
   public async summarizeTasks(branchId?: string): Promise<string> {
     await this.loadTasks();
-    const tasks = branchId ? this.tasks.filter(t => t.branchId === branchId) : this.tasks;
+    const tasks = branchId
+      ? this.tasks.filter(t => t.branchId === branchId)
+      : this.tasks;
     const open = tasks.filter(t => t.status === 'open');
     const inProgress = tasks.filter(t => t.status === 'in_progress');
     const closed = tasks.filter(t => t.status === 'closed');
@@ -992,14 +1041,167 @@ public async updateTaskStatus(taskId: string, status: 'open' | 'in_progress' | '
   public async notifyTask(user: string, task: TaskItem): Promise<void> {
     // TODO: Send notification (Slack/email) (stub)
   }
-
-  public validateAssignee(user: string): boolean {
-    // TODO: Validate user/assignee (stub)
-    return true;
+  /**
+   * Visualize one or more branches as a graph structure with advanced metadata for agent guidance.
+   *
+   * - Clusters nodes using k-means (on embeddings if available, else degree)
+   * - Adds cluster label and color
+   * - Adds node metadata: task status, priority, next-action
+   * - Uses graphlib for centrality (agent can focus on key nodes)
+   * - Supports focusNode and multi-branch visualization
+   *
+   * @param options VisualizationOptions (branchId, branches, focusNode, etc.)
+   * @returns VisualizationData with nodes, edges, and meta
+   */
+  /**
+   * Compute closeness centrality for a graph.
+   */
+  private computeClosenessCentrality(g: GraphType): Record<string, number> {
+    const centrality: Record<string, number> = {};
+    for (const nodeId of g.nodes()) {
+      const result = alg.dijkstra(g, nodeId);
+      let sum = 0;
+      let reachable = 0;
+      for (const { distance } of Object.values(result)) {
+        if (distance < Infinity) {
+          sum += distance;
+          reachable++;
+        }
+      }
+      centrality[nodeId] = sum > 0 ? (reachable - 1) / sum : 0;
+    }
+    return centrality;
   }
 
+  public visualizeBranch(options: VisualizationOptions = {}): VisualizationData {
+    // Destructure options with defaults
+    const {
+      branchId,
+      branches: optBranches,
+      showClusters = true,
+      edgeBundling = false,
+      focusNode,
+      levelOfDetail: lod = 'auto'
+    } = options;
+
+    // Determine branches to include
+    const branchIds = optBranches ?? (branchId ? [branchId] : Array.from(this.branches.keys()));
+    const branches = branchIds.map(id => this.getBranch(id)).filter(Boolean) as ThoughtBranch[];
+
+    // Initialize graph and containers
+    const g = new Graph({ directed: true });
+    let nodes: VisualizationNode[] = [];
+    let edges: VisualizationEdge[] = [];
+
+    // Build nodes and edges
+    for (const branch of branches) {
+      g.setNode(branch.id);
+      nodes.push({ id: branch.id, label: branch.id, type: 'branch' });
+      for (const thought of branch.thoughts) {
+        const label = thought.content.slice(0, 30);
+        g.setNode(thought.id);
+        nodes.push({ id: thought.id, label, type: 'thought' });
+        g.setEdge(branch.id, thought.id);
+        edges.push({ from: branch.id, to: thought.id });
+        if (thought.linkedThoughts) {
+          for (const link of thought.linkedThoughts) {
+            g.setEdge(thought.id, link.toThoughtId);
+            edges.push({ from: thought.id, to: link.toThoughtId, label: link.type, type: 'link' });
+          }
+        }
+      }
+      for (const cross of branch.crossRefs) {
+        g.setEdge(branch.id, cross.toBranch);
+        edges.push({ from: branch.id, to: cross.toBranch, label: cross.type, type: 'crossref' });
+      }
+    }
+
+    // Deduplicate
+    nodes = _.uniqBy(nodes, 'id');
+    edges = _.uniqWith(edges, (a, b) => a.from === b.from && a.to === b.to);
+
+    // Determine detail level
+    const detail: 'low' | 'medium' | 'high' = lod === 'auto'
+      ? (nodes.length > 100 ? 'medium' : 'high')
+      : lod;
+
+    // Container for analytics
+    const analytics: Record<string, any> = {};
+
+    // Clustering
+    if (showClusters && detail !== 'low') {
+      const useEmbeddings = this.embeddings.size >= nodes.length / 2;
+      const features = nodes.map(n => useEmbeddings
+        ? this.embeddings.get(n.id) || [0]
+        : [(g.inEdges(n.id)?.length || 0) + (g.outEdges(n.id)?.length || 0)]
+      );
+      const k = Math.max(2, Math.round(Math.sqrt(nodes.length / 2)));
+      try {
+        const result = kmeans(features, k, { initialization: 'kmeans++', maxIterations: 100 });
+        analytics.centroids = result.centroids;
+        analytics.clusters = result.clusters;
+        // Annotate nodes
+        nodes = nodes.map((n, i) => ({
+          ...n,
+          cluster: result.clusters[i],
+          clusterLabel: `Cluster ${result.clusters[i]}`,
+          clusterColor: `hsl(${(result.clusters[i] * 30)}, 70%, 50%)`
+        }));
+      } catch {}
+      // Group by cluster
+      analytics.clusterGroups = _.groupBy(nodes, 'cluster');
+    }
+
+    // Centrality
+    if (detail !== 'low') {
+      const central = this.computeClosenessCentrality(g);
+      analytics.centrality = central;
+      nodes = nodes.map(n => ({
+        ...n,
+        centrality: central[n.id],
+        highlight: focusNode === n.id
+      }));
+    }
+
+    // High-detail analytics
+    if (detail === 'high') {
+      try { analytics.cycles = alg.findCycles(g); } catch {}
+      try { analytics.topsort = alg.topsort(g); } catch {}
+      if (focusNode && g.hasNode(focusNode)) {
+        try { analytics.shortestPaths = alg.dijkstra(g, focusNode); } catch {}
+      }
+    }
+
+    // Edge bundling stub
+    if (edgeBundling) {
+      analytics.edgeBundles = _.groupBy(edges, e => `${e.from}->${e.to}`);
+    }
+
+    // Task metadata
+    nodes = nodes.map(n => {
+      const task = this.tasks.find(t => t.id === n.id);
+      if (task) {
+        return { ...n, taskStatus: task.status, taskPriority: task.priority, nextAction: task.status !== 'closed' };
+      }
+      return n;
+    });
+
+    // Return combined result
+    return {
+      nodes,
+      edges,
+      meta: { ...options, ...analytics }
+    };
+  }
 
   // --- Code Snippet Management ---
+  /**
+   * Add a code snippet to the manager.
+   * @param content The code content
+   * @param tags Tags for the snippet
+   * @param author Optional author
+   * @returns The saved CodeSnippet
+   */
   public addSnippet(content: string, tags: string[], author?: string): CodeSnippet {
     const snippet: CodeSnippet = {
       id: `snippet-${++this.snippetCounter}`,
@@ -1012,41 +1214,24 @@ public async updateTaskStatus(taskId: string, status: 'open' | 'in_progress' | '
     return snippet;
   }
 
-  // --- Visualization ---
-  public visualizeBranch(branchId?: string): VisualizationData {
-    // Simple graph: nodes = thoughts, branches; edges = crossrefs, links
-    const nodes: VisualizationNode[] = [];
-    const edges: VisualizationEdge[] = [];
-    const branches = branchId ? [this.getBranch(branchId)!] : Array.from(this.branches.values());
-    for (const branch of branches) {
-      nodes.push({ id: branch.id, label: branch.id, type: 'branch' });
-      for (const thought of branch.thoughts) {
-        nodes.push({ id: thought.id, label: thought.content.slice(0, 30), type: 'thought' });
-        edges.push({ from: branch.id, to: thought.id, label: 'has', type: 'thought' });
-        if (thought.linkedThoughts) {
-          for (const link of thought.linkedThoughts) {
-            edges.push({ from: thought.id, to: link.toThoughtId, label: link.type, type: 'link' });
-          }
-        }
-      }
-      for (const crossRef of branch.crossRefs) {
-        edges.push({ from: branch.id, to: crossRef.toBranch, label: crossRef.type, type: 'crossref' });
-      }
-    }
-    return { nodes, edges };
-  }
-
   // --- Smart Q&A (stub) ---
+  /**
+   * Ask a question about the branch/thoughts (stub for AI/LLM)
+   * @param question The question to answer
+   * @returns AI-generated answer (stub)
+   */
   public async askQuestion(question: string): Promise<string> {
     // Placeholder: In real implementation, use AI/LLM
     return `AI answer to: ${question}`;
   }
 
-  // Profile management
+  // --- Profile management ---
   private profiles: Map<string, Profile> = new Map();
 
   /**
    * Create a new profile for thoughts.
+   * @param name The profile name
+   * @returns The created Profile
    */
   public createProfile(name: string): Profile {
     const id = this.generateId('profile');
@@ -1057,6 +1242,8 @@ public async updateTaskStatus(taskId: string, status: 'open' | 'in_progress' | '
 
   /**
    * Get a profile by ID.
+   * @param id Profile ID
+   * @returns The Profile or undefined
    */
   public getProfile(id: string): Profile | undefined {
     return this.profiles.get(id);
@@ -1097,5 +1284,98 @@ public async updateTaskStatus(taskId: string, status: 'open' | 'in_progress' | '
     task.auditTrail.push({ action: `Assigned to ${assignee}`, user: assignee, timestamp: new Date().toISOString() });
     await this.saveTasks();
     return true;
+  }
+
+  /**
+   * Clear all in-memory and persistent caches
+   */
+  public clearCache(): void {
+    this.embeddingCache.clear();
+    this.embeddings.clear();
+    this.persistentEmbeddingCache = {};
+  }
+
+  /**
+   * Get statistics about current caches
+   */
+  public getCacheStats(): Record<string, number> {
+    return {
+      embeddingCacheSize: this.embeddingCache.size,
+      embeddingsMapSize: this.embeddings.size,
+      persistentCacheEntries: Object.keys(this.persistentEmbeddingCache).length,
+      snippetCount: this.snippets.length,
+    };
+  }
+
+  /**
+   * Cache for visualization analytics (e.g., from visualizeBranch).
+   * Uses LRU and short TTL to speed repeated agent requests.
+   */
+  private analyticsCache = new LRUCache<string, VisualizationData>({ max: 50, ttl: 1000 * 60 * 5 }); // 5 min
+
+  /**
+   * Get or compute embedding for a thought and cache it.
+   */
+  private async getOrCreateEmbedding(thoughtId: string, content: string): Promise<number[]> {
+    if (this.embeddingCache.has(thoughtId)) return this.embeddingCache.get(thoughtId)!;
+    const pipeline = await this.getEmbeddingPipeline();
+    const text = this.truncateText(content);
+    const embeddingResult = await pipeline(text, {});
+    // embeddingResult may be numeric[][]; take first token vector and flatten
+    const vector = Array.isArray(embeddingResult) && Array.isArray((embeddingResult as any)[0])
+      ? (embeddingResult as any)[0] as number[]
+      : (embeddingResult as any) as number[];
+    this.embeddingCache.set(thoughtId, vector);
+    this.embeddings.set(thoughtId, vector);
+    return vector;
+  }
+
+  /**
+   * Prefetch embeddings for all thoughts in a branch.
+   */
+  private async prefetchEmbeddingsForBranch(branch: ThoughtBranch): Promise<void> {
+    for (const t of branch.thoughts) {
+      // fire-and-forget
+      this.getOrCreateEmbedding(t.id, t.content).catch(() => {});
+    }
+  }
+
+  /**
+   * Prefetch caches for a branch: summary, embeddings, and optional analytics.
+   * @param branchId The branch to prefetch
+   * @param advanced When true, also precompute full visualization analytics
+   */
+  public async prefetchBranchCaches(branchId: string, advanced = false): Promise<void> {
+    const branch = this.branches.get(branchId);
+    if (!branch) return;
+    // 1. Prefetch summary
+    this.summarizeBranchThoughts(branchId).catch(() => {});
+    // 2. Prefetch embeddings
+    this.prefetchEmbeddingsForBranch(branch);
+    // 3. Prefetch analytics if advanced
+    if (advanced) {
+      const key = branchId;
+      if (!this.analyticsCache.has(key)) {
+        // compute in background
+        setImmediate(() => {
+          try {
+            const viz = this.visualizeBranch({ branchId, showClusters: true, edgeBundling: true, levelOfDetail: 'high' });
+            this.analyticsCache.set(key, viz);
+          } catch {}
+        });
+      }
+    }
+  }
+
+  /**
+   * Retrieve cached analytics or compute+cache if missing.
+   */
+  public getCachedAnalytics(branchId: string): VisualizationData {
+    if (this.analyticsCache.has(branchId)) {
+      return this.analyticsCache.get(branchId)!;
+    }
+    const viz = this.visualizeBranch({ branchId, showClusters: true, edgeBundling: true, levelOfDetail: 'high' });
+    this.analyticsCache.set(branchId, viz);
+    return viz;
   }
 }
