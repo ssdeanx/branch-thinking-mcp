@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { ThoughtBranch, ThoughtData, Insight, CrossReference, InsightType, CrossRefType, BranchingThoughtInput, ThoughtLink, CodeSnippet, TaskItem, ReviewSuggestion, VisualizationData, VisualizationNode, VisualizationEdge, ExternalSearchResult } from './types.js';
+import { ThoughtBranch, ThoughtData, Insight, CrossReference, InsightType, CrossRefType, BranchingThoughtInput, ThoughtLink, CodeSnippet, TaskItem, ReviewSuggestion, VisualizationData, VisualizationNode, VisualizationEdge, ExternalSearchResult, Profile } from './types.js';
 import { pipeline, FeatureExtractionPipeline } from '@xenova/transformers';
 
 // Cosine similarity for two vectors
@@ -24,6 +24,9 @@ export class BranchManager {
   // Use 'any' for summarization pipeline due to type issues with summary_text property
   private summarizationPipeline: any = null;
   private embeddings: Map<string, number[]> = new Map(); // thoughtId -> embedding
+
+  // Flag to optionally skip automatic task extraction
+  private skipNextTaskExtraction: boolean = false;
 
   /**
    * Load the summarization pipeline if not already loaded.
@@ -465,10 +468,20 @@ export class BranchManager {
    * Accepts a single BranchingThoughtInput or an array of them.
    * Returns the last ThoughtData added (for compatibility).
    */
-  addThought(input: BranchingThoughtInput | BranchingThoughtInput[]): ThoughtData {
+  public addThought(input: BranchingThoughtInput | BranchingThoughtInput[]): ThoughtData {
     const inputs = Array.isArray(input) ? input : [input];
+    // Set skip flag for next status/history task extraction
+    this.skipNextTaskExtraction = inputs.some(item => item.skipExtractTasks === true);
     let lastThought: ThoughtData | undefined;
     for (const item of inputs) {
+      // Validate content
+      if (!item.content || !item.content.trim()) {
+        throw new Error('Thought content cannot be empty');
+      }
+      // Validate and assign profile if provided
+      if (item.profileId && !this.profiles.has(item.profileId)) {
+        throw new Error(`Profile not found: ${item.profileId}`);
+      }
       // Use active branch if no branchId provided
       const branchId = item.branchId || this.activeBranchId || this.generateId('branch');
       let branch = this.branches.get(branchId);
@@ -479,6 +492,7 @@ export class BranchManager {
         id: `thought-${++this.thoughtCounter}`,
         content: item.content,
         branchId: branch.id,
+        profileId: item.profileId,
         timestamp: new Date(),
         metadata: {
           type: item.type,
@@ -486,6 +500,28 @@ export class BranchManager {
           keyPoints: item.keyPoints || []
         }
       };
+      // Compute thought score
+      let score = thought.metadata.confidence;
+      score += thought.metadata.keyPoints.length * 0.1;
+      score += (item.crossRefs?.length || 0) * 0.2;
+      score += (item.thoughtCrossRefs?.length || 0) * 0.2;
+      thought.score = score;
+      // Auto-generate a simple insight per thought
+      const simpleInsight = this.createInsight(
+        'observation',
+        `Auto-generated insight from thought: ${thought.content.slice(0, 50)}`,
+        [thought.id]
+      );
+      branch.insights.push(simpleInsight);
+      this.insightsCache.set(branch.id, branch.insights.slice(-10));
+      // Add thought-level cross references if provided
+      if (item.thoughtCrossRefs) {
+        thought.linkedThoughts = item.thoughtCrossRefs.map(ref => ({
+          toThoughtId: ref.toThoughtId,
+          type: ref.type,
+          reason: ref.reason
+        }));
+      }
       branch.thoughts.push(thought);
       lastThought = thought;
       // Create insights if key points are provided
@@ -511,8 +547,23 @@ export class BranchManager {
             ref.strength
           );
           branch!.crossRefs.push(crossRef);
+          // Auto-reverse cross reference on target branch
+          const targetBranch = this.branches.get(ref.toBranch);
+          if (targetBranch) {
+            const reverseCr = this.createCrossReference(
+              ref.toBranch,
+              branch!.id,
+              ref.type,
+              `[Auto] ${ref.reason}`,
+              ref.strength
+            );
+            targetBranch.crossRefs.push(reverseCr);
+          }
         });
       }
+      // Auto-generate advanced insights per thought
+      this.generateAdvancedInsights(branch);
+
       this.updateBranchMetrics(branch);
       // Invalidate caches for this branch
       this.historyCache.delete(branchId);
@@ -526,6 +577,8 @@ export class BranchManager {
    * Adds new insights for frequent key points and sentiment trends.
    */
   public generateAdvancedInsights(branch: ThoughtBranch): void {
+    // Prepare linking: existing insight IDs
+    const parentIds: string[] = branch.insights.map(i => i.id);
     // Analyze frequent key points
     const keyPointCounts: Record<string, number> = {};
     branch.thoughts.forEach(t => {
@@ -537,16 +590,31 @@ export class BranchManager {
       .filter(([_, count]) => count > 1)
       .map(([kp]) => kp);
     if (frequentKeyPoints.length > 0) {
-      branch.insights.push(this.createInsight(
+      const insight = this.createInsight(
         'behavioral_pattern',
         `Frequent key points detected: ${frequentKeyPoints.join(', ')}`,
-        frequentKeyPoints
-      ));
+        frequentKeyPoints,
+        parentIds
+      );
+      branch.insights.push(insight);
+      this.insightsCache.set(branch.id, branch.insights.slice(-10));
+      // Auto cross-reference new insight to prior insights
+      parentIds.forEach(pid => {
+        const cr = this.createCrossReference(
+          branch.id,
+          branch.id,
+          'builds_upon',
+          `Insight ${insight.id} builds on ${pid}`,
+          1.0
+        );
+        branch.crossRefs.push(cr);
+      });
+      parentIds.push(insight.id);
     }
     // Simple sentiment analysis: count positive/negative/neutral
     let pos = 0, neg = 0, neu = 0;
-    const positiveWords = ['good', 'great', 'positive', 'success', 'improve'];
-    const negativeWords = ['bad', 'fail', 'negative', 'problem', 'issue'];
+    const positiveWords = ['good', 'great', 'positive', 'success', 'improve', 'yes'];
+    const negativeWords = ['bad', 'fail', 'negative', 'problem', 'issue', 'no'];
     branch.thoughts.forEach(t => {
       const lc = t.content.toLowerCase();
       if (positiveWords.some(w => lc.includes(w))) pos++;
@@ -555,11 +623,25 @@ export class BranchManager {
     });
     if (pos || neg) {
       const sentiment = pos > neg ? 'positive' : (neg > pos ? 'negative' : 'mixed');
-      branch.insights.push(this.createInsight(
+      const insight = this.createInsight(
         'observation',
         `Branch sentiment trend: ${sentiment} (${pos} positive, ${neg} negative, ${neu} neutral)`,
-        []
-      ));
+        [],
+        parentIds
+      );
+      branch.insights.push(insight);
+      this.insightsCache.set(branch.id, branch.insights.slice(-10));
+      // Auto cross-reference new sentiment insight to prior insights
+      parentIds.forEach(pid => {
+        const cr = this.createCrossReference(
+          branch.id,
+          branch.id,
+          'builds_upon',
+          `Insight ${insight.id} builds on ${pid}`,
+          1.0
+        );
+        branch.crossRefs.push(cr);
+      });
     }
   }
 
@@ -623,48 +705,28 @@ export class BranchManager {
     const header = chalk.blue(`History for branch: ${branchId} (${branch.state})`);
     const timeline = branch.thoughts.map((t, i) => {
       const timestamp = t.timestamp.toLocaleTimeString();
-      const number = chalk.gray(`${i + 1}.`);
-      const content = t.content;
-      const type = chalk.yellow(`[${t.metadata.type}]`);
-      const points = t.metadata.keyPoints.length > 0 
-        ? chalk.green(`\n   Key Points: ${t.metadata.keyPoints.join(', ')}`)
-        : '';
-      return `${number} ${timestamp} ${type}\n   ${content}${points}`;
-    }).join('\n\n');
-    const insights = branch.insights.map(i =>
-      chalk.yellow(`→ ${i.content}`)
-    ).join('\n');
-    // --- New: snippets, tasks, reviews ---
-    const snippets = this.snippets.filter(s => s.tags.includes(branchId));
-    const snippetSection = snippets.length
-      ? chalk.cyan(`Snippets:\n${snippets.map(s => `  - ${s.content.slice(0, 40)} [${s.tags.join(', ')}]`).join('\n')}`)
-      : '';
-
-    const tasks = await this.extractTasks(branchId);
-    const taskSection = tasks.length
-      ? chalk.magenta(`Tasks:\n${tasks.map((t: TaskItem) => `  - ${t.content}`).join('\n')}`)
-      : '';
-
-    const reviews = await this.reviewBranch(branchId);
-    const reviewSection = reviews.length
-      ? chalk.red(`Reviews:\n${reviews.map((r: ReviewSuggestion) => `  - ${r.content}`).join('\n')}`)
-      : '';
-
+      return `│ [${timestamp}] ${t.content}`;
+    }).join('\n');
+    // Optionally skip task extraction
+    const tasks = this.skipNextTaskExtraction ? [] : await this.extractTasks(branchId);
+    const taskLines = tasks.map(t => `│ [Task] ${t.content}`).join('\n');
+    const insights = branch.insights.slice(-10).map(i => `│ [Insight] ${i.content}`).join('\n');
     const result = `
 ┌─────────────────────────────────────────────
 │ ${header}
 ├─────────────────────────────────────────────
 ${timeline}
-${snippetSection ? `\n├─────────────────────────────────────────────\n│ ${snippetSection}` : ''}
-${taskSection ? `\n├─────────────────────────────────────────────\n│ ${taskSection}` : ''}
-${reviewSection ? `\n├─────────────────────────────────────────────\n│ ${reviewSection}` : ''}
-${insights ? `\n├─────────────────────────────────────────────\n│ Insights:\n${insights}` : ''}
+${insights ? `\n├─────────────────────────────────────────────\n${insights}` : ''}
+${taskLines ? `\n├─────────────────────────────────────────────\n${taskLines}` : ''}
 └─────────────────────────────────────────────`;
     this.historyCache.set(branchId, result);
+    // Reset skip flag
+    this.skipNextTaskExtraction = false;
     return result;
   }
 
-  async formatBranchStatus(branch: ThoughtBranch): Promise<string> {
+  // Format branch status
+  public async formatBranchStatus(branch: ThoughtBranch): Promise<string> {
     // Try cache first
     const cached = this.statusCache.get(branch.id);
     if (cached) return cached;
@@ -686,7 +748,8 @@ ${insights ? `\n├────────────────────�
       ? chalk.cyan(`Snippets:\n${snippets.map(s => `  - ${s.content.slice(0, 40)} [${s.tags.join(', ')}]`).join('\n')}`)
       : '';
 
-    const tasks = await this.extractTasks(branch.id);
+    // Optionally skip automatic task extraction
+    const tasks = this.skipNextTaskExtraction ? [] : await this.extractTasks(branch.id);
     const taskSection = tasks.length
       ? chalk.magenta(`Tasks:\n${tasks.map((t: TaskItem) => `  - ${t.content}`).join('\n')}`)
       : '';
@@ -709,7 +772,31 @@ ${insights}
 ${crossRefs}
 └─────────────────────────────────────────────`;
     this.statusCache.set(branch.id, result);
+    // Reset skip flag after formatting
+    this.skipNextTaskExtraction = false;
     return result;
+  }
+
+  /**
+   * Merge one branch into another, transferring thoughts, insights, and cross-references.
+   */
+  public mergeBranches(sourceBranchId: string, targetBranchId: string): ThoughtBranch {
+    const source = this.branches.get(sourceBranchId);
+    const target = this.branches.get(targetBranchId);
+    if (!source || !target) {
+      throw new Error(`Cannot merge: branch not found`);
+    }
+    // Transfer content
+    target.thoughts.push(...source.thoughts);
+    target.insights.push(...source.insights);
+    target.crossRefs.push(...source.crossRefs);
+    this.updateBranchMetrics(target);
+    // Remove source branch
+    this.branches.delete(sourceBranchId);
+    if (this.activeBranchId === sourceBranchId) {
+      this.activeBranchId = targetBranchId;
+    }
+    return target;
   }
 
   // ... (other methods remain unchanged)
@@ -953,5 +1040,62 @@ public async updateTaskStatus(taskId: string, status: 'open' | 'in_progress' | '
   public async askQuestion(question: string): Promise<string> {
     // Placeholder: In real implementation, use AI/LLM
     return `AI answer to: ${question}`;
+  }
+
+  // Profile management
+  private profiles: Map<string, Profile> = new Map();
+
+  /**
+   * Create a new profile for thoughts.
+   */
+  public createProfile(name: string): Profile {
+    const id = this.generateId('profile');
+    const profile: Profile = { id, name, settings: {} };
+    this.profiles.set(id, profile);
+    return profile;
+  }
+
+  /**
+   * Get a profile by ID.
+   */
+  public getProfile(id: string): Profile | undefined {
+    return this.profiles.get(id);
+  }
+
+  /** Retrieve all tasks for a branch or all tasks */
+  public async getTasks(branchId?: string): Promise<TaskItem[]> {
+    await this.loadTasks();
+    return branchId
+      ? this.tasks.filter(t => t.branchId === branchId)
+      : this.tasks;
+  }
+
+  /** Get the next open task by creation time */
+  public async getNextTask(branchId?: string): Promise<TaskItem | null> {
+    await this.loadTasks();
+    const openTasks = (branchId
+      ? this.tasks.filter(t => t.branchId === branchId)
+      : this.tasks).filter(t => t.status === 'open');
+    if (openTasks.length === 0) return null;
+    openTasks.sort((a, b) => (new Date(a.createdAt!).getTime()) - (new Date(b.createdAt!).getTime()));
+    return openTasks[0];
+  }
+
+  /** Advance a task's status */
+  public async advanceTask(taskId: string, nextStatus: 'open' | 'in_progress' | 'closed'): Promise<boolean> {
+    return this.updateTaskStatus(taskId, nextStatus);
+  }
+
+  /** Assign a task to a user */
+  public async assignTask(taskId: string, assignee: string): Promise<boolean> {
+    await this.loadTasks();
+    const task = this.tasks.find(t => t.id === taskId);
+    if (!task) throw new Error(`Task not found: ${taskId}`);
+    task.assignee = assignee;
+    task.lastEditor = assignee;
+    task.auditTrail = task.auditTrail || [];
+    task.auditTrail.push({ action: `Assigned to ${assignee}`, user: assignee, timestamp: new Date().toISOString() });
+    await this.saveTasks();
+    return true;
   }
 }

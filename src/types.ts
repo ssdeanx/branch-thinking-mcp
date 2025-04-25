@@ -14,6 +14,7 @@ export interface ThoughtData {
   id: string;
   content: string;
   branchId: string;
+  profileId?: string;
   timestamp: Date;
   metadata: {
     type: string;
@@ -93,7 +94,6 @@ export interface TaskItem {
   stale?: boolean;
 }
 
-
 export interface ReviewSuggestion {
   id: string;
   branchId: string;
@@ -133,6 +133,8 @@ export interface BranchingThoughtInput {
   branchId?: string;
   parentBranchId?: string;
   type: string;
+  profileId?: string;
+  thoughtCrossRefs?: ThoughtLink[];
   confidence?: number;
   keyPoints?: string[];
   relatedInsights?: string[];
@@ -148,4 +150,12 @@ export interface BranchingThoughtInput {
   taskContent?: string;
   reviewContent?: string;
   reviewType?: string;
+  skipExtractTasks?: boolean;
+}
+
+// Profile for categorizing thoughts
+export interface Profile {
+  id: string;
+  name: string;
+  settings: Record<string, any>;
 }

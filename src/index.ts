@@ -86,9 +86,20 @@ class BranchingThoughtServer {
     assignee?: string;
     due?: string;
     taskId?: string;
+    parentBranchId?: string;
   }): Promise<{ content: Array<{ type: string; text: string }> }> {
     try {
       switch (command.type) {
+        case 'create-branch': {
+          if (!command.branchId) throw new Error('branchId required for create-branch');
+          const branch = this.branchManager.createBranch(command.branchId, command.parentBranchId);
+          return {
+            content: [{
+              type: "text",
+              text: `Created branch '${branch.id}'${command.parentBranchId ? ` with parent '${command.parentBranchId}'` : ''}.`
+            }]
+          };
+        }
         case 'insights': {
           const branchId = command.branchId || this.branchManager.getActiveBranch()?.id;
           if (!branchId) {
@@ -350,6 +361,17 @@ class BranchingThoughtServer {
             ]
           };
         }
+        case 'ask': {
+          if (!('question' in command) || typeof command.question !== 'string') throw new Error('ask requires a question string');
+          const question = command.question;
+          const answer = await this.branchManager.askQuestion(question);
+          return {
+            content: [{
+              type: "text",
+              text: answer
+            }]
+          };
+        }
       }
       // Default return for unknown command types
       return {
@@ -376,70 +398,48 @@ class BranchingThoughtServer {
 const BRANCHING_THOUGHT_TOOL: Tool = {
   name: "branch-thinking",
   description: `
-# 🧠 Branch-Thinking Tool
+# Branch-Thinking Tool
 
-AI-native tool for managing, visualizing, and reasoning over branching thoughts, tasks, code, and knowledge.
+The Branch-Thinking Tool is an AI-powered assistant for managing branching thoughts, tasks, insights, and cross-references. It provides a comprehensive set of commands and workflows to streamline ideation and execution.
 
----
+## Core Features
+- Semantic Search & Embeddings: Retrieve related thoughts via high-quality vector search.
+- Visualization: Generate JSON and Mermaid diagrams of thought graphs and tasks.
+- Insight Generation: Auto-generate and refine insights from thought metadata.
+- Task Management: Extract, list, assign, and advance tasks with audit trails.
+- Branch & Profile Management: Create, focus, and manage branches and profiles.
 
-## ✨ Features
+## Commands
+- Always start by creating a new branch
+- \`create-branch [branchId?]\`: Create a new branch or switch to an existing one.
+- \`add-thought [branchId] [content] [--type TYPE] [--keyPoints KP] [--confidence FLOAT] [--profileId ID] [--crossRefs JSON]\`: Add a new thought with optional metadata.
+- \`list-branches\`: List all branches with status and active indicator.
+- \`focus [branchId]\`: Set the active branch context.
+- \`history [branchId?]\`: Display chronological history of thoughts and tasks.
+- \`insights [branchId?]\`: Show cached or real-time insights.
+- \`crossrefs [branchId?]\`: List cross-references within and across branches.
+- \`hub-thoughts [branchId?]\`: Identify top thoughts by score and cross-reference count.
+- \`semantic-search [query] [--topN N]\`: Find semantically similar thoughts across branches.
+- \`link-thoughts [fromId] [toId] [type] [reason?]\`: Create a semantic link between two thoughts.
+- \`extract-tasks [branchId?]\`: Generate actionable tasks.
+- \`list-tasks [branchId] [--status STATUS] [--assignee NAME] [--due DATE]\`: List tasks with optional filters.
+- \`update-task-status [taskId] [status]\`: Advance a task's status.
+- \`summarize-branch [branchId?]\`: Generate a concise summary of branch thoughts and insights.
+- \`summarize-tasks [branchId?]\`: Summarize task statuses and key points.
+- \`review-branch [branchId?]\`: Get an AI-driven review of branch code or content.
+- \`visualize [branchId?]\`: Output JSON and Mermaid diagrams.
+- \`add-snippet [content] [tags] [author?]\`: Save code snippets.
+- \`snippet-search [query] [--topN N]\`: Search saved snippets.
+- \`doc-thought [thoughtId]\`: Generate detailed documentation for a thought.
+- \`ask [question]\`: Ask a free-form AI question.
 
-- **Semantic Search & Embeddings** — Instantly find relevant thoughts using high-quality vector search.
-- **Agentic Visualization** — Generate JSON graphs and beautiful Mermaid diagrams.
-- **Branch & Thought Management** — Organize, batch-add, and cross-link ideas.
-- **Insight Generation & Task Automation** — Extract tasks, review code, and surface high-impact ideas.
-
----
-
-## 🛠️ Core Commands
-
-- Remember you must always start with new branch and thoughts.
-- Always keep track of ids.
-- When creating a branch give it random id.
-- Always start with new branch and thoughts.
-- \`content\` (string): — The content of the thought (idea, analysis, observation, etc.).
-- \`type\` (string): — The type of the thought (e.g., analysis, observation, idea, etc.).
-- \`add-thought [branchId] [content] [type]\` — Add a new thought to the specified branch. Provide the branch ID, the content of the thought (idea, analysis, observation, etc.), and an optional type for categorization.
-- \`link-thoughts [fromThoughtId] [toThoughtId] [type] [reason]\` — Create a semantic link between two thoughts, specifying the relationship type (supports, contradicts, related, expands, refines, etc.) and an optional reason for the connection.
-- \`list\` — Retrieve a list of all branches, including their IDs and current status (active/inactive).
-- \`focus [branchId]\` — Set the active context to the specified branch, so all subsequent commands operate on this branch.
-- \`history [branchId?]\` — Display the chronological history of thoughts and actions within a branch. If no branchId is provided, use the current active branch.
-- \`insights [branchId?]\` — Show recent AI-generated insights for the branch, such as patterns, summaries, or recommendations.
-- \`crossrefs [branchId?]\` — List all cross-references (links to other branches or thoughts) for the branch.
-- \`hub-thoughts [branchId?]\` — Identify the most influential or highly connected thoughts in the branch.
-- \`semantic-search [query]\` — Find thoughts across all branches that are semantically similar to the provided query using vector embeddings.
-- \`add-snippet [content] [tags]\` — Save a code snippet with descriptive tags for later search and reference.
-- \`snippet-search [query]\` — Search all saved code snippets by content or tag.
-- \`summarize-branch [branchId?]\` — Generate a concise summary of all thoughts and insights in the branch.
-- \`doc-thought [thoughtId]\` — Automatically generate documentation for a specific thought, providing context and explanation.
-- \`extract-tasks [branchId?]\` — Extract actionable tasks from the thoughts in a branch using AI analysis.
-- \`list-tasks [branchId] [status] [assignee] [due]\` — List all tasks in a branch, with optional filters for status, assignee, or due date.
-- \`update-task-status [taskId] [status]\` — Update the status of a specific task (e.g., open, in_progress, closed).
-- \`summarize-tasks [branchId]\` — Provide a summary of the status and key points of all tasks in a branch.
-- \`review-branch [branchId?]\` — Run an AI-powered review of the branchs thoughts or code, surfacing suggestions and improvements.
-- \`visualize [branchId?]\` — Output a JSON or Mermaid diagram graph of the branch, showing thoughts, tasks, and their relationships.
-- \`ask [question]\` — Ask an AI-powered question about the knowledge base or branch content, and receive an answer based on the current context.
-
----
-
-## 💡 Best Practices
-
-- Use batch/insight modes for brainstorming and research.
-- Regularly review hub thoughts and cross-references for hidden connections.
-- Leverage visualization and semantic search for agentic workflows.
-
----
-
-## ⚡ Quick Example
-
-- ✍️ \`ask-snippet [content] [tags]\` — Add a code snippet to the branch.  
-  _Params:_  
-  - \`content\` (string): — The snippet code or text.  
-  - \`tags\` (array of strings): — Tags for categorization.
-- 📝 \`summarize-branch [branchId?]\` — Returns a summary of the specified branch.  
-  _If no branchId is given, summarizes the active branch._
-
-`,  
+## Quick Start Example
+- \`create-branch research_idea\`
+- \`focus research_idea\`
+- \`add-thought research_idea "Define hypothesis on AI Flow" --type analysis --keyPoints hypothesis,AI --confidence 0.8\`
+- \`extract-tasks\`
+- \`insights\`
+`,
   inputSchema: {
     type: "object",
     properties: {
@@ -496,7 +496,7 @@ AI-native tool for managing, visualizing, and reasoning over branching thoughts,
         properties: {
           type: {
             type: "string",
-            enum: ["list", "focus", "history", "insights", "crossrefs", "hub-thoughts", "semantic-search", "link-thoughts", "add-snippet", "snippet-search", "summarize-branch", "doc-thought", "extract-tasks", "review-branch", "visualize", "ask"],
+            enum: ["create-branch","list","focus","history","insights","crossrefs","hub-thoughts","semantic-search","link-thoughts","add-snippet","snippet-search","summarize-branch","doc-thought","extract-tasks","review-branch","visualize","ask"],
             description: "Command type (see tool description for complete list and semantics)."
           },
           branchId: {
@@ -547,7 +547,11 @@ AI-native tool for managing, visualizing, and reasoning over branching thoughts,
           reason: {
             type: "string",
             description: "Optional: Reason or context for linking thoughts."
-          }
+          },
+          parentBranchId: {
+            type: "string",
+            description: "Optional: Parent branch ID for hierarchical organization when creating a branch."
+          },
         },
         required: ["type"]
       }
